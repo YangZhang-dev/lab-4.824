@@ -22,13 +22,26 @@ type ExampleReply struct {
 	Y int
 }
 
-// Add your RPC definitions here.
+type TaskType int8
 
+const (
+	NoTask     = 0
+	MapTask    = 1
+	ReduceTask = 2
+)
+
+type PullTaskReq struct {
+}
+
+type PullTaskRsp struct {
+	T        TaskType
+	FilePath string
+}
 
 // Cook up a unique-ish UNIX-domain socket name
 // in /var/tmp, for the coordinator.
-// Can't use the current directory since
-// Athena AFS doesn't support UNIX-domain sockets.
+// Can'T use the current directory since
+// Athena AFS doesn'T support UNIX-domain sockets.
 func coordinatorSock() string {
 	s := "/var/tmp/824-mr-"
 	s += strconv.Itoa(os.Getuid())
