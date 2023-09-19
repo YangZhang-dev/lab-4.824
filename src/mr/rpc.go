@@ -6,7 +6,9 @@ package mr
 // remember to capitalize all names.
 //
 
-import "os"
+import (
+	"os"
+)
 import "strconv"
 
 //
@@ -14,34 +16,21 @@ import "strconv"
 // and reply for an RPC.
 //
 
-type ExampleArgs struct {
-	X int
-}
-
-type ExampleReply struct {
-	Y int
-}
-
-type TaskType int8
-
-const (
-	NoTask     = 0
-	MapTask    = 1
-	ReduceTask = 2
-)
-
 type PullTaskReq struct {
 }
 
 type PullTaskRsp struct {
-	T        TaskType
-	FilePath string
+	T    TaskType
+	Task interface{}
 }
 
-// Cook up a unique-ish UNIX-domain socket name
-// in /var/tmp, for the coordinator.
-// Can'T use the current directory since
-// Athena AFS doesn'T support UNIX-domain sockets.
+type CallbackFinishTaskReq struct {
+	FilePath string
+	TaskId   int
+}
+type CallbackFinishTaskRsp struct {
+}
+
 func coordinatorSock() string {
 	s := "/var/tmp/824-mr-"
 	s += strconv.Itoa(os.Getuid())

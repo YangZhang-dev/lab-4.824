@@ -9,12 +9,30 @@ package main
 // Please do not change this file.
 //
 
-import "6.824/mr"
+import (
+	"6.824/mr"
+	"log"
+)
 import "time"
 import "os"
 import "fmt"
 
 func main() {
+	fileName := "master.log"
+
+	// open log file
+	logFile, err := os.OpenFile(fileName, os.O_APPEND|os.O_RDWR|os.O_CREATE, 0644)
+	if err != nil {
+		log.Panic(err)
+	}
+	defer logFile.Close()
+
+	// set log out put
+	log.SetOutput(logFile)
+
+	// optional: log date-time, filename, and line number
+	log.SetFlags(log.Lshortfile | log.LstdFlags)
+
 	if len(os.Args) < 2 {
 		fmt.Fprintf(os.Stderr, "Usage: mrcoordinator inputfiles...\n")
 		os.Exit(1)
