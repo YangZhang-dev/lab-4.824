@@ -31,7 +31,6 @@ type ReduceTasks struct {
 type Coordinator struct {
 	ReduceTasks
 	MapTasks
-	DoneFlag chan bool
 }
 
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
