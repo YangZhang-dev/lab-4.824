@@ -186,15 +186,8 @@ func (r *ReduceWorker) CallbackFinishReduceTask() {
 func PullTask() (TaskType, interface{}) {
 	args := PullTaskReq{}
 	rsp := PullTaskRsp{}
-	for {
-		// TODO 循环停止
-		call("Coordinator.PullTask", &args, &rsp)
-		if rsp.T == TNoTask {
-			time.Sleep(1 * time.Second)
-		} else {
-			return rsp.T, rsp.Task
-		}
-	}
+	call("Coordinator.PullTask", &args, &rsp)
+	return rsp.T, rsp.Task
 }
 
 func call(rpcname string, args interface{}, reply interface{}) bool {
