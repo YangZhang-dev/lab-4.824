@@ -2,9 +2,9 @@ package mr
 
 import (
 	"encoding/gob"
-	"fmt"
 	"log"
 	"sync"
+	"time"
 )
 import "net"
 import "os"
@@ -22,7 +22,7 @@ type MapTasks struct {
 
 type ReduceTasks struct {
 	BuketNumber           int
-	ReduceTask            []ReduceTask
+	ReduceTaskList        []ReduceTask
 	CompleteTaskNumber    int
 	CanAllocateTaskNumber int
 	*sync.RWMutex
@@ -31,6 +31,7 @@ type ReduceTasks struct {
 type Coordinator struct {
 	ReduceTasks
 	MapTasks
+	DoneFlag chan bool
 }
 
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
@@ -40,7 +41,7 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 		BuketNumber:           nReduce,
 		RWMutex:               &sync.RWMutex{},
 		CanAllocateTaskNumber: 0,
-		ReduceTask:            []ReduceTask{},
+		ReduceTaskList:        []ReduceTask{},
 	}
 
 	m := MapTasks{
@@ -56,7 +57,37 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 		MapTasks:    m,
 	}
 	c.server()
+	go c.tailCheck()
 	return &c
+}
+func (c *Coordinator) tailCheck() {
+	for {
+		time.Sleep(10)
+		c.MapTasks.Lock()
+		for i, task := range c.MapTasks.MapTaskList {
+			if task.Status == ALLOCATION {
+				t := time.Since(time.Unix(task.startTime, 0))
+				if t > time.Second*10 {
+					c.MapTaskList[i].Status = TIMEOUT
+					c.MapTasks.CanAllocateTaskNumber++
+					log.Printf("a map task timeout,t:%v\n", t)
+				}
+			}
+		}
+		c.MapTasks.Unlock()
+		c.ReduceTasks.Lock()
+		for i, task := range c.ReduceTasks.ReduceTaskList {
+			if task.Status == ALLOCATION {
+				t := time.Since(time.Unix(task.startTime, 0))
+				if t > time.Second*10 {
+					c.ReduceTaskList[i].Status = TIMEOUT
+					c.ReduceTasks.CanAllocateTaskNumber++
+					log.Println("a reduce task timeout")
+				}
+			}
+		}
+		c.ReduceTasks.Unlock()
+	}
 }
 func (m *MapTasks) init(files []string) {
 	m.Lock()
@@ -66,6 +97,7 @@ func (m *MapTasks) init(files []string) {
 			Task: Task{
 				T:              TMapTask,
 				TargetFilePath: "",
+				startTime:      0,
 				Status:         UN_ALLOCATION,
 				ID:             len(m.MapTaskList),
 			},
@@ -74,18 +106,19 @@ func (m *MapTasks) init(files []string) {
 	}
 	m.CanAllocateTaskNumber = len(files)
 	m.AllTaskNumber = len(files)
-	fmt.Printf("now have %v maptask\n", len(files))
+	log.Printf("now have %v maptask\n", len(files))
 }
 func (r *ReduceTasks) init(files []string) {
 	r.Lock()
 	defer r.Unlock()
 	for i := 0; i < r.BuketNumber; i++ {
-		r.ReduceTask = append(r.ReduceTask, ReduceTask{
+		r.ReduceTaskList = append(r.ReduceTaskList, ReduceTask{
 			Task: Task{
 				T:              TReduceTask,
 				TargetFilePath: "",
 				Status:         UN_ALLOCATION,
-				ID:             len(r.ReduceTask),
+				ID:             len(r.ReduceTaskList),
+				startTime:      0,
 			},
 			BuketNumber:  r.BuketNumber,
 			BuketKey:     i,
@@ -106,7 +139,7 @@ func (c *Coordinator) PullTask(args *PullTaskReq, reply *PullTaskRsp) error {
 	reply.Task = rt
 	reply.T = rt.T
 	if rt.T != TNoTask {
-		log.Printf("Allocate a ReduceTask , id is %v,type is %v\n",
+		log.Printf("Allocate a ReduceTaskList , id is %v,type is %v\n",
 			rt.ID, rt.T)
 		return nil
 	}
@@ -130,10 +163,12 @@ func (c *Coordinator) CallbackFinishMapTask(args *CallbackFinishTaskReq, reply *
 	c.MapTasks.Unlock()
 
 	if f {
+		c.MapTasks.RLock()
 		var fileList []string
 		for _, mapTask := range c.MapTaskList {
 			fileList = append(fileList, mapTask.TargetFilePath)
 		}
+		c.MapTasks.RUnlock()
 		c.ReduceTasks.init(fileList)
 		log.Println("start reduce tasks")
 	}
@@ -144,10 +179,10 @@ func (c *Coordinator) CallbackFinishReduceTask(args *CallbackFinishTaskReq, repl
 	filePath := args.FilePath
 	c.ReduceTasks.Lock()
 	defer c.ReduceTasks.Unlock()
-	c.ReduceTask[taskId].Status = COMPLETE
+	c.ReduceTaskList[taskId].Status = COMPLETE
 	c.ReduceTasks.CompleteTaskNumber++
 	log.Println("a reduce task finish")
-	c.ReduceTask[taskId].TargetFilePath = filePath
+	c.ReduceTaskList[taskId].TargetFilePath = filePath
 	return nil
 }
 func (c *Coordinator) getCanAllocateTaskNumber() (int, int) {
@@ -162,15 +197,15 @@ func (c *Coordinator) getCanAllocateTaskNumber() (int, int) {
 func (c *Coordinator) getReduceTask() ReduceTask {
 	c.ReduceTasks.Lock()
 	defer c.ReduceTasks.Unlock()
-	for i, task := range c.ReduceTask {
+	for i, task := range c.ReduceTaskList {
 		if task.Status == UN_ALLOCATION || task.Status == TIMEOUT {
-			c.ReduceTask[i].Status = ALLOCATION
+			c.ReduceTaskList[i].Status = ALLOCATION
 			c.ReduceTasks.CanAllocateTaskNumber--
+			c.ReduceTaskList[i].startTime = time.Now().Unix()
 			return task
 		}
 	}
 	return ReduceTask{Task: Task{T: TNoTask}}
-
 }
 
 func (c *Coordinator) getMapTask() MapTask {
@@ -180,6 +215,7 @@ func (c *Coordinator) getMapTask() MapTask {
 		if task.Status == UN_ALLOCATION || task.Status == TIMEOUT {
 			c.MapTasks.CanAllocateTaskNumber--
 			c.MapTaskList[i].Status = ALLOCATION
+			c.MapTaskList[i].startTime = time.Now().Unix()
 			return task
 		}
 	}

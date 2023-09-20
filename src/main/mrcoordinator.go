@@ -39,7 +39,6 @@ func main() {
 	}
 
 	m := mr.MakeCoordinator(os.Args[1:], 10)
-	fmt.Println("master is running...")
 	for m.Done() == false {
 		time.Sleep(time.Second)
 	}

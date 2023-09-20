@@ -22,6 +22,7 @@ type Task struct {
 	TargetFilePath string
 	Status         status
 	ID             int
+	startTime      int64
 }
 type MapTask struct {
 	Task

@@ -81,7 +81,7 @@ func WorkerInit(mapf func(string, string) []KeyValue,
 			worker.ReduceWorker.invoke()
 		} else {
 			count++
-			if count > 10 {
+			if count > 20 {
 				break
 			}
 			time.Sleep(1 * time.Second)
