@@ -58,31 +58,38 @@ func TestReElection2A(t *testing.T) {
 	cfg.begin("Test (2A): election after network failure")
 
 	leader1 := cfg.checkOneLeader()
-
+	fmt.Printf("get a leader :%v\n", leader1)
 	// if the leader disconnects, a new one should be elected.
 	cfg.disconnect(leader1)
-	cfg.checkOneLeader()
-
+	fmt.Printf("raft-%v 断开连接\n", leader1)
+	l := cfg.checkOneLeader()
+	fmt.Printf("get a new leader :%v\n", l)
 	// if the old leader rejoins, that shouldn't
 	// disturb the new leader.
 	cfg.connect(leader1)
+	fmt.Printf("raft-%v 恢复连接\n", leader1)
 	leader2 := cfg.checkOneLeader()
-
+	fmt.Printf("get a new leader :%v\n", l)
 	// if there's no quorum, no leader should
 	// be elected.
 	cfg.disconnect(leader2)
+	fmt.Printf("raft-%v 断开连接\n", leader2)
 	cfg.disconnect((leader2 + 1) % servers)
+	fmt.Printf("raft-%v 断开连接\n", (leader2+1)%servers)
+
 	time.Sleep(2 * RaftElectionTimeout)
 	cfg.checkNoLeader()
-
+	fmt.Println("此时无法选出领导")
 	// if a quorum arises, it should elect a leader.
 	cfg.connect((leader2 + 1) % servers)
-	cfg.checkOneLeader()
-
+	fmt.Printf("raft-%v 恢复连接\n", (leader2+1)%servers)
+	leader3 := cfg.checkOneLeader()
+	fmt.Printf("get a new leader :%v\n", leader3)
 	// re-join of last node shouldn't prevent leader from existing.
 	cfg.connect(leader2)
-	cfg.checkOneLeader()
-
+	fmt.Printf("raft-%v 恢复连接\n", leader2)
+	leader4 := cfg.checkOneLeader()
+	fmt.Printf("get a new leader :%v\n", leader4)
 	cfg.end()
 }
 
@@ -142,10 +149,8 @@ func TestBasicAgree2B(t *testing.T) {
 	cfg.end()
 }
 
-//
 // check, based on counting bytes of RPCs, that
 // each command is sent to each peer just once.
-//
 func TestRPCBytes2B(t *testing.T) {
 	servers := 3
 	cfg := make_config(t, servers, false, false)
@@ -705,7 +710,6 @@ func TestPersist32C(t *testing.T) {
 	cfg.end()
 }
 
-//
 // Test the scenarios described in Figure 8 of the extended Raft paper. Each
 // iteration asks a leader, if there is one, to insert a command in the Raft
 // log.  If there is a leader, that leader will fail quickly with a high
@@ -714,7 +718,6 @@ func TestPersist32C(t *testing.T) {
 // alive servers isn't enough to form a majority, perhaps start a new server.
 // The leader in a new term may try to finish replicating log entries that
 // haven't been committed yet.
-//
 func TestFigure82C(t *testing.T) {
 	servers := 5
 	cfg := make_config(t, servers, false, false)
