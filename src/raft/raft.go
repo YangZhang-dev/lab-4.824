@@ -58,9 +58,9 @@ const (
 	FOLLOWER  int32 = 3
 )
 const (
-	BASE_VOTE_TIMEOUT  = 200
-	VOTE_TIMEOUT_RANGE = 200
-	HEARTBEAT_TIMEOUT  = 50
+	BASE_VOTE_TIMEOUT  = 150
+	VOTE_TIMEOUT_RANGE = 150
+	HEARTBEAT_TIMEOUT  = 100
 )
 const VOTE_NO = -1
 
@@ -74,12 +74,13 @@ type Logs struct {
 
 // Raft A Go object implementing a single Raft peer.
 type Raft struct {
-	mu        sync.RWMutex        // Lock to protect shared access to this peer's state
+	//VoteMu    sync.RWMutex        // Lock to protect shared access to this peer's state
 	peers     []*labrpc.ClientEnd // RPC end points of all peers
 	persister *Persister          // Object to hold this peer's persisted state
 	me        int                 // this peer's index into peers[]
 	dead      int32               // set by Kill()
 
+	cond        *sync.Cond
 	memberShip  int32
 	logs        Logs
 	voteEndTime int64
@@ -87,6 +88,7 @@ type Raft struct {
 	voteTimeout int64
 	voteFor     int32
 	majority    int
+	Rand        *rand.Rand
 	// Your data here (2A, 2B, 2C).
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
@@ -109,7 +111,11 @@ func (rf *Raft) getMembership() int32 {
 	return atomic.LoadInt32(&rf.memberShip)
 }
 func (rf *Raft) setMembership(m int32) {
+	member := atomic.LoadInt32(&rf.memberShip)
 	atomic.StoreInt32(&rf.memberShip, m)
+	if member == LEADER && m != LEADER {
+		rf.cond.Signal()
+	}
 }
 func (rf *Raft) setVoteFor(m int32) {
 	atomic.StoreInt32(&rf.voteFor, m)
@@ -223,19 +229,20 @@ type EntityReply struct {
 
 func (rf *Raft) RequestEntity(args *RequestEntityArgs, reply *RequestEntityReply) {
 	// ok,leader is live
-	rf.xlog("收到来自raft%v的心跳", args.LeaderId)
+	// rf.log("收到来自raft%v的心跳", args.LeaderId)
 	term := args.Term
 	reply.Success = false
 	reply.FollowerId = rf.me
 	reply.Term = rf.getCurrentTerm()
 	if rf.getCurrentTerm() > term {
-		rf.xlog("leader的term小，已经拒绝")
+		// rf.log("leader的term小，已经拒绝")
 		return
 	}
+	rf.setCurrentTerm(term)
 	rf.RestartVoteEndTime()
 	rf.setMembership(FOLLOWER)
 	rf.setVoteFor(VOTE_NO)
-	rf.xlog("设置时间戳：%v", rf.getVoteEndTime())
+	// rf.log("设置时间戳：%v", rf.getVoteEndTime())
 	reply.Success = true
 }
 func (rf *Raft) sendRequestEntity(server int, args *RequestEntityArgs, reply *RequestEntityReply) bool {
@@ -246,44 +253,44 @@ func (rf *Raft) sendRequestEntity(server int, args *RequestEntityArgs, reply *Re
 // RequestVote
 // example RequestVote RPC handler.
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
-	// TODO
 	// Your code here (2A, 2B).
 	term := args.Term
 	candidateId := args.CandidateId
 	lastLogIndex := args.LastLogIndex
 	lastLogTerm := args.LastLogTerm
-	rf.xlog("接收到来自%v号服务器的投票请求", candidateId)
+	// rf.log("接收到来自%v号服务器的投票请求", candidateId)
 
 	reply.Term = rf.getCurrentTerm()
 	reply.FollowerId = rf.me
 	reply.VoteGranted = false
-	// check does self vote for other of self
-
-	if rf.getVoteFor() != -1 {
-		rf.xlog("已经向他人投过票，已经拒绝")
-		return
-	}
 	// check candidate's term
 	if term < rf.getCurrentTerm() {
-		rf.xlog("他的term小，已经拒绝")
+		// rf.log("他的term小，已经拒绝")
 		return
 	}
-
-	// check log's term and index
-	if lastLogTerm < rf.logs.LastLogTerm {
-		rf.xlog("他log的term小，已经拒绝")
-		return
+	if term == rf.getCurrentTerm() {
+		// check does self vote for other of self
+		if rf.getVoteFor() != -1 {
+			// rf.log("已经向他人投过票，已经拒绝")
+			return
+		}
+		// check log's term and index
+		if lastLogTerm < rf.logs.LastLogTerm {
+			// rf.log("他log的term小，已经拒绝")
+			return
+		}
+		if lastLogTerm == rf.logs.LastLogTerm && lastLogIndex < rf.logs.LastLogIndex {
+			// rf.log("log的term相同，但他的log的index小，已经拒绝")
+			return
+		}
 	}
-	if lastLogTerm == rf.logs.LastLogTerm && lastLogIndex < rf.logs.LastLogIndex {
-		rf.xlog("log的term相同，但他的log的index小，已经拒绝")
-		return
-	}
-	rf.xlog("投他一票")
+	// rf.log("投他一票")
 	reply.VoteGranted = true
 	rf.RestartVoteEndTime()
 	rf.setVoteFor(int32(candidateId))
-	if args.Term > rf.getCurrentTerm() {
-		rf.setCurrentTerm(args.Term)
+	if term > rf.getCurrentTerm() {
+		// rf.log("当前term为：%v,更新term为%v", rf.getCurrentTerm(), term)
+		rf.setCurrentTerm(term)
 	}
 	rf.setMembership(FOLLOWER)
 }
@@ -360,13 +367,15 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	// Your initialization code here (2A, 2B, 2C).
 	rf.setMembership(FOLLOWER)
 	rf.RestartVoteEndTime()
-	rf.setVoteTimeout(int64(rand.Intn(VOTE_TIMEOUT_RANGE) + BASE_VOTE_TIMEOUT))
 	t := len(peers) % 2
 	rf.majority = t
 	if t != 0 {
 		rf.majority++
 	}
+	rf.cond = sync.NewCond(&sync.Mutex{})
 	rf.setVoteFor(VOTE_NO)
+	rf.Rand = rand.New(rand.NewSource(int64(rf.me * rand.Int())))
+	rf.setVoteTimeout(int64(rf.Rand.Intn(VOTE_TIMEOUT_RANGE) + BASE_VOTE_TIMEOUT))
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
 
@@ -386,31 +395,72 @@ func (rf *Raft) init() {
 	log.SetFlags(log.Lmicroseconds)
 }
 
+// true 超时
+func checkTime(lastTime, timeout int64) (bool, time.Duration) {
+	currentTime := time.Now()
+	voteEndTime := time.UnixMilli(lastTime)
+	voteTimeout := time.Duration(timeout) * time.Millisecond
+
+	elapsed := currentTime.Sub(voteEndTime)
+	duration := voteTimeout - time.Duration(2)*time.Microsecond - elapsed
+	if duration > 0 {
+		return false, duration
+	}
+	return true, duration
+
+}
 func (rf *Raft) CheckVoteTimeout() {
 	rf.init()
-	rf.xlog("当前Raft信息：%+v", rf)
-	rf.xlog("初始化完成，开始投票倒计时")
+	// rf.log("当前Raft信息：%+v", rf)
+	// rf.log("初始化完成，开始投票倒计时")
+	ticker := time.NewTicker(time.Duration(rf.getVoteTimeout()) * time.Millisecond)
 	for {
-		t := time.Since(time.UnixMilli(rf.getVoteEndTime()))
-		//rf.xlog("距离上一次计时过去了：%vms,我睡一会：%vms", t.Milliseconds(), rf.getVoteTimeout()-t.Milliseconds())
-		time.Sleep(time.Duration(rf.getVoteTimeout()-t.Milliseconds()) * time.Millisecond)
-		t = time.Since(time.UnixMilli(rf.getVoteEndTime()))
-		//rf.xlog("我睡醒了，现在距离上一次计时：%vms", t.Milliseconds(), rf.getVoteTimeout()-t.Milliseconds())
-		if t.Milliseconds() >= rf.getVoteTimeout() {
-			rf.xlog("设置的超时时间为:%vms,当前时间戳为：%v，上次的时间戳是：%v,当前过了：%vms,我要发起投票了", rf.getVoteTimeout(), time.Now().UnixMilli(), rf.getVoteEndTime(), t.Milliseconds())
-			rf.InitiateVote()
+		if rf.getMembership() == LEADER {
+			rf.cond.L.Lock()
+			for rf.getMembership() == LEADER {
+				rf.cond.Wait()
+			}
+			rf.cond.L.Unlock()
+		}
+		select {
+		case <-ticker.C:
+			timeout, duration := checkTime(rf.getVoteEndTime(), rf.getVoteTimeout())
+			if timeout {
+				// rf.log("投票超时,超时时间：%vms,设置的timeout：%vms", duration.Milliseconds(), rf.voteTimeout)
+				rf.InitiateVote()
+			} else {
+				// rf.log("投票未超时，还剩下：%vms", duration.Milliseconds())
+				ticker.Reset(duration - time.Duration(5)*time.Microsecond)
+			}
 		}
 	}
+
+	//for {
+	//	rf.cond.L.Lock()
+	//	for rf.getMembership() == LEADER {
+	//		rf.cond.Wait()
+	//	}
+	//	rf.cond.L.Unlock()
+	//	t := time.Since(time.UnixMilli(rf.getVoteEndTime()))
+	//	// rf.log("距离上一次计时过去了：%vms,睡眠：%vms", t.Milliseconds(), rf.getVoteTimeout()-t.Milliseconds())
+	//	time.Sleep(time.Duration(rf.getVoteTimeout()-t.Milliseconds()) * time.Millisecond)
+	//	t = time.Since(time.UnixMilli(rf.getVoteEndTime()))
+	//	// rf.log("睡醒了，现在距离上一次计时：%vms", t.Milliseconds(), rf.getVoteTimeout()-t.Milliseconds())
+	//	if t.Milliseconds() >= rf.getVoteTimeout() {
+	//		// rf.log("设置的超时时间为:%vms,当前时间戳为：%v，上次的时间戳是：%v,当前过了：%vms,我要发起投票了", rf.getVoteTimeout(), time.Now().UnixMilli(), rf.getVoteEndTime(), t.Milliseconds())
+	//		rf.InitiateVote()
+	//	}
+	//}
 }
 func (rf *Raft) InitiateVote() {
-	rf.xlog("发起第%v轮投票", rf.getCurrentTerm())
+	// rf.log("发起第%v轮投票", rf.getCurrentTerm())
 	// if from follower to candidate,plus 1 to currentTerm
-	if rf.getMembership() == FOLLOWER {
-		rf.setCurrentTerm(rf.getCurrentTerm() + 1)
-	}
+	rf.setCurrentTerm(rf.getCurrentTerm() + 1)
+	//// rf.log("由follower转化为candidate，term加一变为：%v", rf.getCurrentTerm())
 	// if last membership is candidate,update voteTimeout to avoid conflict
 	if rf.getMembership() == CANDIDATE {
-		rf.setVoteTimeout(int64(rand.Intn(VOTE_TIMEOUT_RANGE) + BASE_VOTE_TIMEOUT))
+		i := int64(rf.Rand.Intn(VOTE_TIMEOUT_RANGE) + BASE_VOTE_TIMEOUT)
+		rf.setVoteTimeout(i)
 	}
 	// update membership to candidate
 	rf.setMembership(CANDIDATE)
@@ -418,28 +468,34 @@ func (rf *Raft) InitiateVote() {
 
 	if rf.getMembership() == CANDIDATE {
 		getVoteNum := rf.handleVote()
-		rf.xlog("获得%v张票", getVoteNum)
+		// rf.log("获得%v张票", getVoteNum)
 		// get majority server vote
 		if getVoteNum >= rf.majority {
-			rf.xlog("我获得的大多数选票,当选term为%v的leader", rf.getCurrentTerm())
+			// rf.log("我获得的大多数选票,当选term为%v的leader", rf.getCurrentTerm())
 			// update membership to leader
 			rf.setMembership(LEADER)
 			rf.setVoteFor(VOTE_NO)
-			rf.xlog("开启心跳")
-
+			// rf.log("开启心跳")
 		} else {
-			rf.xlog("oh, 我没有获得大多数选票")
+			rf.RestartVoteEndTime()
+			// rf.log("oh, 我没有获得大多数选票")
 		}
 	}
 	if rf.getMembership() == FOLLOWER {
-		rf.xlog("结束选票，我现在的身份是FOLLOWER")
+		// rf.log("结束选票，我现在的身份是FOLLOWER")
 	} else if rf.getMembership() == LEADER {
-		rf.xlog("结束选票，我现在的身份是LEADER")
+		// rf.log("结束选票，我现在的身份是LEADER")
 	} else {
-		rf.xlog("结束选票，我现在的身份是CANDIDATE")
+		// rf.log("结束选票，我现在的身份是CANDIDATE")
 	}
 }
 func (rf *Raft) handleVote() int {
+	defer func() {
+		if r := recover(); r != nil {
+
+		}
+	}()
+
 	// vote for myself
 	getVoteNum := 0
 	getVoteNum++
@@ -455,42 +511,57 @@ func (rf *Raft) handleVote() int {
 	rf.RestartVoteEndTime()
 	// send RV RPC to all server
 	group := sync.WaitGroup{}
+	//var j int32 = 1
+	group.Add(rf.majority - 1)
 	for i := range rf.peers {
 		if i == rf.me {
 			continue
 		}
-		group.Add(1)
+		//group.Add(1)
 		go func(i int) {
+			defer func() {
+				if r := recover(); r != nil {
+				}
+			}()
 			reply := RequestVoteReply{}
 			ok := rf.sendRequestVote(i, &args, &reply)
+
+			//if atomic.LoadInt32(&j) < int32(rf.majority) {
 			voteReply := VoteReply{
 				RequestVoteReply: reply,
 				Ok:               ok,
 			}
+			// rf.log("将服务器%v的投票结果放入", reply.FollowerId)
+			//atomic.AddInt32(&j, 1)
 			ch <- voteReply
 			group.Done()
+			//}
 		}(i)
 	}
+	// TODO 如果投票结果请求时间大于超时时间，会出现错误
 	group.Wait()
 	close(ch)
 	for reply := range ch {
+		if rf.getMembership() != CANDIDATE {
+			break
+		}
 		if !reply.Ok {
-			rf.xlog("服务器%v无响应", reply.RequestVoteReply.FollowerId)
+			// rf.log("服务器%v无响应", reply.RequestVoteReply.FollowerId)
 			continue
 		}
 		if !reply.RequestVoteReply.VoteGranted {
-			rf.xlog("服务器%v没有投给我票，我的term是%v，他的term是%v", reply.RequestVoteReply.FollowerId, rf.getCurrentTerm(), reply.RequestVoteReply.Term)
+			// rf.log("服务器%v没有投给我票，我的term是%v，他的term是%v", reply.RequestVoteReply.FollowerId, rf.getCurrentTerm(), reply.RequestVoteReply.Term)
 			// check term
 			if reply.RequestVoteReply.Term > rf.getCurrentTerm() {
 				rf.setCurrentTerm(reply.RequestVoteReply.Term)
-				rf.xlog("我比服务器%v的term小，我不再发起选票", reply.RequestVoteReply.FollowerId)
+				// rf.log("我比服务器%v的term小，我不再发起选票", reply.RequestVoteReply.FollowerId)
 				// update self membership to follower
 				rf.setMembership(FOLLOWER)
 				break
 			}
 			continue
 		}
-		rf.xlog("获得来自服务器%v的选票", reply.RequestVoteReply.FollowerId)
+		// rf.log("获得来自服务器%v的选票", reply.RequestVoteReply.FollowerId)
 		getVoteNum++
 		if getVoteNum >= rf.majority {
 			break
@@ -505,23 +576,21 @@ func (rf *Raft) HeartBeat() {
 		if rf.getMembership() != LEADER {
 			continue
 		}
-		rf.xlog("发送心跳,时间戳为：%v", time.Now().UnixMilli())
+		// rf.log("发送心跳,时间戳为：%v", time.Now().UnixMilli())
+		args := RequestEntityArgs{}
+		args.Term = rf.getCurrentTerm()
+		args.LeaderId = rf.me
 		for i := range peers {
 			if i == me {
 				continue
 			}
-			args := RequestEntityArgs{}
-			args.Term = rf.getCurrentTerm()
-			args.LeaderId = rf.me
 			reply := RequestEntityReply{}
-			rf.xlog("向%v号服务器发送心跳，时间戳为：%v", i, time.Now().UnixMilli())
+			// rf.log("向%v号服务器发送心跳，时间戳为：%v", i, time.Now().UnixMilli())
 			go rf.sendRequestEntity(i, &args, &reply)
 		}
-		rf.RestartVoteEndTime()
-		rf.xlog("发送完一次心跳，时间戳为：%v", time.Now().UnixMilli())
+		//// rf.log("发送完一次心跳，时间戳为：%v", time.Now().UnixMilli())
 		time.Sleep(time.Duration(HEARTBEAT_TIMEOUT) * time.Millisecond)
-		rf.RestartVoteEndTime()
-		//rf.xlog("我睡醒了，当前时间戳是：%v", time.Now().UnixMilli())
+		//// rf.log("我睡醒了，当前时间戳是：%v", time.Now().UnixMilli())
 	}
 }
 
@@ -532,7 +601,7 @@ func (rf *Raft) HeartBeat() {
 //		if rf.getMembership() != LEADER {
 //			break
 //		}
-//		rf.xlog("发送心跳,时间戳为：%v", time.Now().UnixMilli())
+//		// rf.log("发送心跳,时间戳为：%v", time.Now().UnixMilli())
 //		ch := make(chan EntityReply, len(peers))
 //		group := sync.WaitGroup{}
 //		for i := range peers {
@@ -545,7 +614,7 @@ func (rf *Raft) HeartBeat() {
 //				args.Term = rf.getCurrentTerm()
 //				args.LeaderId = rf.me
 //				reply := RequestEntityReply{}
-//				rf.xlog("向%v号服务器发送心跳，时间戳为：%v", i, time.Now().UnixMilli())
+//				// rf.log("向%v号服务器发送心跳，时间戳为：%v", i, time.Now().UnixMilli())
 //				ok := rf.sendRequestEntity(i, &args, &reply)
 //				entityReply := EntityReply{
 //					RequestEntityReply: reply,
@@ -560,7 +629,7 @@ func (rf *Raft) HeartBeat() {
 //		rf.RestartVoteEndTime()
 //		for reply := range ch {
 //			if !reply.Ok {
-//				rf.xlog("服务器%v无响应", reply.RequestEntityReply.FollowerId)
+//				// rf.log("服务器%v无响应", reply.RequestEntityReply.FollowerId)
 //				continue
 //			}
 //			if reply.RequestEntityReply.Success {
@@ -571,12 +640,12 @@ func (rf *Raft) HeartBeat() {
 //			rf.setMembership(FOLLOWER)
 //			break
 //		}
-//		rf.xlog("发送完一次心跳，时间戳为：%v", time.Now().UnixMilli())
+//		// rf.log("发送完一次心跳，时间戳为：%v", time.Now().UnixMilli())
 //		time.Sleep(time.Duration(HEARTBEAT_TIMEOUT) * time.Millisecond)
-//		//rf.xlog("我睡醒了，当前时间戳是：%v", time.Now().UnixMilli())
+//		//// rf.log("我睡醒了，当前时间戳是：%v", time.Now().UnixMilli())
 //	}
 //}
 
 func (rf *Raft) xlog(desc string, v ...interface{}) {
-	log.Printf("raft-"+strconv.Itoa(rf.me)+"-"+desc+"\n", v...)
+	log.Printf("raft-"+strconv.Itoa(rf.me)+"-term-"+strconv.FormatInt(int64(rf.getCurrentTerm()), 10)+"-"+desc+"\n", v...)
 }
