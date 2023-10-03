@@ -62,6 +62,13 @@ func (lf *Logs) getLastLogIndex() int {
 	return len(lf.LogList) - 1
 }
 
+//	func (rf *Raft) setNextLogIndex(serverId, index int) {
+//		atomic.StorePointer((*unsafe.Pointer)(unsafe.Pointer(&serverId)), unsafe.Pointer(&index))
+//	}
+//
+//	func (rf *Raft) getNextLogIndex(serverId int) int {
+//		return *(*int)(atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&rf.nextIndex[serverId]))))
+//	}
 func (lf *Logs) storeLog(command interface{}, term int32) {
 	lf.mu.Lock()
 	defer lf.mu.Unlock()
@@ -72,4 +79,9 @@ func (lf *Logs) storeLog(command interface{}, term int32) {
 		State:   UNCOMMITED,
 	})
 
+}
+func (lf *Logs) removeLogs(startIndex int) {
+	lf.mu.Lock()
+	defer lf.mu.Unlock()
+	lf.LogList = lf.LogList[:startIndex+1]
 }

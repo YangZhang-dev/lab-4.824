@@ -1,8 +1,11 @@
 package raft
 
 import (
+	"fmt"
 	"log"
+	"runtime"
 	"strconv"
+	"strings"
 	"sync/atomic"
 )
 
@@ -71,6 +74,7 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 // should call killed() to check whether it should stop.
 func (rf *Raft) Kill() {
 	atomic.StoreInt32(&rf.dead, 1)
+	rf.xlog("当前日志%+v，commitIndex：%v", rf.logs.LogList, rf.commitIndex)
 	// Your code here, if desired.
 }
 
@@ -152,6 +156,23 @@ const DEBUG = true
 
 func (rf *Raft) xlog(desc string, v ...interface{}) {
 	if DEBUG {
-		log.Printf("raft-"+strconv.Itoa(rf.me)+"-term-"+strconv.FormatInt(int64(rf.getCurrentTerm()), 10)+"-"+desc+"\n", v...)
+		s := "candidate"
+		if rf.getMembership() == FOLLOWER {
+			s = "follower"
+		} else if rf.getMembership() == LEADER {
+			s = "leader"
+		}
+		log.Printf(strconv.Itoa(GoID())+"-raft-"+strconv.Itoa(rf.me)+"-term-"+strconv.FormatInt(int64(rf.getCurrentTerm()), 10)+"-"+s+": "+desc+"\n", v...)
 	}
+}
+func GoID() int {
+	var buf [64]byte
+	n := runtime.Stack(buf[:], false)
+	// 得到id字符串
+	idField := strings.Fields(strings.TrimPrefix(string(buf[:n]), "goroutine "))[0]
+	id, err := strconv.Atoi(idField)
+	if err != nil {
+		panic(fmt.Sprintf("cannot get goroutine id: %v", err))
+	}
+	return id
 }

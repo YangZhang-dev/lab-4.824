@@ -12,38 +12,39 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	candidateId := args.CandidateId
 	lastLogIndex := args.LastLogIndex
 	lastLogTerm := args.LastLogTerm
-	rf.xlog("接收到来自%v号服务器的投票请求", candidateId)
+	// rf.log("接收到来自%v号服务器-term-%v的投票请求", candidateId, term)
 
 	reply.Term = rf.getCurrentTerm()
 	reply.FollowerId = rf.me
 	reply.VoteGranted = false
 	// check candidate's term
 	if term < rf.getCurrentTerm() {
-		rf.xlog("他的term小，已经拒绝")
+		// rf.log("他的term小，已经拒绝")
 		return
 	}
+	// check does self vote for other of self
 	if term == rf.getCurrentTerm() {
 		// check does self vote for other of self
 		if rf.getVoteFor() != -1 {
-			rf.xlog("已经向他人投过票，已经拒绝")
+			// rf.log("已经向他人投过票，已经拒绝")
 			return
 		}
 		// check log's term and index
 		if lastLogTerm < rf.logs.getLastLog().Term {
-			rf.xlog("他log的term小，已经拒绝")
+			// rf.log("他log的term小，已经拒绝")
 			return
 		}
 		if lastLogTerm == rf.logs.getLastLog().Term && lastLogIndex < rf.logs.getLastLogIndex() {
-			rf.xlog("log的term相同，但他的log的index小，已经拒绝")
+			// rf.log("log的term相同，但他的log的index小，已经拒绝")
 			return
 		}
 	}
-	rf.xlog("投他一票")
+	// rf.log("投他一票")
 	reply.VoteGranted = true
 	rf.RestartVoteEndTime()
 	rf.setVoteFor(int32(candidateId))
 	if term > rf.getCurrentTerm() {
-		rf.xlog("当前term为：%v,更新term为%v", rf.getCurrentTerm(), term)
+		// rf.log("当前term为：%v,更新term为%v", rf.getCurrentTerm(), term)
 		rf.setCurrentTerm(term)
 	}
 	rf.setMembership(FOLLOWER)
@@ -59,8 +60,8 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 // ----------------------------
 // true 超时
 func (rf *Raft) checkVoteTimeout() {
-	rf.xlog("当前Raft信息：%+v", rf)
-	rf.xlog("初始化完成，开始投票倒计时")
+	// rf.log("当前Raft信息：%+v", rf)
+	// rf.log("初始化完成，开始投票倒计时")
 	ticker := time.NewTicker(time.Duration(rf.getVoteTimeout()) * time.Millisecond)
 	for {
 		if rf.getMembership() == LEADER {
@@ -69,15 +70,16 @@ func (rf *Raft) checkVoteTimeout() {
 				rf.VoteCond.Wait()
 			}
 			rf.VoteCond.L.Unlock()
+			ticker.Reset(time.Duration(rf.getVoteTimeout()) * time.Millisecond)
 		}
 		select {
 		case <-ticker.C:
 			timeout, duration := checkTime(rf.getVoteEndTime(), rf.getVoteTimeout())
 			if timeout {
-				rf.xlog("投票超时,超时时间：%vms,设置的timeout：%vms", duration.Milliseconds(), rf.voteTimeout)
+				// rf.log("投票超时,超时时间：%vms,设置的timeout：%vms", duration.Milliseconds(), rf.voteTimeout)
 				rf.election()
 			} else {
-				rf.xlog("投票未超时，还剩下：%vms", duration.Milliseconds())
+				// rf.log("投票未超时，还剩下：%vms", duration.Milliseconds())
 				ticker.Reset(duration - time.Duration(5)*time.Microsecond)
 			}
 		}
@@ -85,9 +87,9 @@ func (rf *Raft) checkVoteTimeout() {
 
 }
 func (rf *Raft) election() {
-	rf.xlog("发起第%v轮投票", rf.getCurrentTerm())
+	// rf.log("发起第%v轮投票", rf.getCurrentTerm())
 	rf.setCurrentTerm(rf.getCurrentTerm() + 1)
-	//// rf.xlog("由follower转化为candidate，term加一变为：%v", rf.getCurrentTerm())
+	//// // rf.log("由follower转化为candidate，term加一变为：%v", rf.getCurrentTerm())
 	// if last membership is candidate,update voteTimeout to avoid conflict
 	if rf.getMembership() == CANDIDATE {
 		i := int64(rf.Rand.Intn(VOTE_TIMEOUT_RANGE) + BASE_VOTE_TIMEOUT)
@@ -99,31 +101,31 @@ func (rf *Raft) election() {
 
 	if rf.getMembership() == CANDIDATE {
 		getVoteNum := rf.handleVote()
-		rf.xlog("获得%v张票", getVoteNum)
+		// rf.log("获得%v张票", getVoteNum)
 		// get majority server vote
 		if getVoteNum >= rf.majority {
-			rf.xlog("我获得的大多数选票,当选term为%v的leader", rf.getCurrentTerm())
+			// rf.log("我获得的大多数选票,当选term为%v的leader", rf.getCurrentTerm())
 			// update membership to leader
 			rf.setMembership(LEADER)
 			rf.setVoteFor(VOTE_NO)
-			rf.xlog("开启心跳")
+			// rf.log("开启心跳")
 		} else {
 			rf.RestartVoteEndTime()
-			rf.xlog("oh, 我没有获得大多数选票")
+			// rf.log("oh, 我没有获得大多数选票")
 		}
 	}
-	if rf.getMembership() == FOLLOWER {
-		rf.xlog("结束选票，我现在的身份是FOLLOWER")
-	} else if rf.getMembership() == LEADER {
-		rf.xlog("结束选票，我现在的身份是LEADER")
-	} else {
-		rf.xlog("结束选票，我现在的身份是CANDIDATE")
-	}
+	//if rf.getMembership() == FOLLOWER {
+	//	// rf.log("结束选票，我现在的身份是FOLLOWER")
+	//} else if rf.getMembership() == LEADER {
+	//	// rf.log("结束选票，我现在的身份是LEADER")
+	//} else {
+	//	// rf.log("结束选票，我现在的身份是CANDIDATE")
+	//}
 }
 func (rf *Raft) handleVote() int {
 	defer func() {
 		if r := recover(); r != nil {
-			rf.xlog("%v", r)
+			// rf.log("%v", r)
 		}
 	}()
 	// vote for myself
@@ -158,7 +160,7 @@ func (rf *Raft) handleVote() int {
 				RequestVoteReply: reply,
 				Ok:               ok,
 			}
-			rf.xlog("将服务器%v的投票结果放入", reply.FollowerId)
+			// rf.log("将服务器%v的投票结果放入", reply.FollowerId)
 			ch <- voteReply
 			group.Done()
 		}(i)
@@ -171,22 +173,23 @@ func (rf *Raft) handleVote() int {
 			break
 		}
 		if !reply.Ok {
-			rf.xlog("服务器%v无响应", reply.RequestVoteReply.FollowerId)
+			// rf.log("服务器%v无响应", reply.RequestVoteReply.FollowerId)
 			continue
 		}
 		if !reply.RequestVoteReply.VoteGranted {
-			rf.xlog("服务器%v没有投给我票，我的term是%v，他的term是%v", reply.RequestVoteReply.FollowerId, rf.getCurrentTerm(), reply.RequestVoteReply.Term)
+			// rf.log("服务器%v没有投给我票，我的term是%v，他的term是%v", reply.RequestVoteReply.FollowerId, rf.getCurrentTerm(), reply.RequestVoteReply.Term)
 			// check term
 			if reply.RequestVoteReply.Term > rf.getCurrentTerm() {
 				rf.setCurrentTerm(reply.RequestVoteReply.Term)
-				rf.xlog("我比服务器%v的term小，我不再发起选票", reply.RequestVoteReply.FollowerId)
+				// rf.log("我比服务器%v的term小，我不再发起选票", reply.RequestVoteReply.FollowerId)
 				// update self membership to follower
 				rf.setMembership(FOLLOWER)
+				rf.RestartVoteEndTime()
 				break
 			}
 			continue
 		}
-		rf.xlog("获得来自服务器%v的选票", reply.RequestVoteReply.FollowerId)
+		// rf.log("获得来自服务器%v的选票", reply.RequestVoteReply.FollowerId)
 		getVoteNum++
 		if getVoteNum >= rf.majority {
 			break
