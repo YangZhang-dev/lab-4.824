@@ -83,86 +83,18 @@ func (rf *Raft) killed() bool {
 	return z == 1
 }
 
-// The ticker go routine starts a new election if this peer hasn't received
-// heartsbeats recently.
-func (rf *Raft) ticker() {
-	for rf.killed() == false {
-		// TODO
-		// Your code here to check if a leader election should
-		// be started and to randomize sleeping time using
-		// time.Sleep().
-
-	}
-}
-
-//	func (rf *Raft) heartBeat() {
-//		peers := rf.peers
-//		me := rf.me
-//		if rf.getMembership() != LEADER {
-//			rf.HeartBeatCond.L.Lock()
-//			for rf.getMembership() == LEADER {
-//				rf.HeartBeatCond.Wait()
-//			}
-//			rf.HeartBeatCond.L.Unlock()
-//			// when raft's membership become leader,reset match index and next index
-//			rf.matchIndex = make([]int, 0)
-//			rf.nextIndex = make([]int, rf.logs.getLastLogIndex()+1)
-//		}
-//		rf.xlog("发送心跳,时间戳为：%v", time.Now().UnixMilli())
-//		ch := make(chan EntityReply, len(peers))
-//		group := sync.WaitGroup{}
-//		for i := range peers {
-//			if i == me {
-//				continue
-//			}
-//			group.Add(1)
-//			go func(i int) {
-//				args := RequestEntityArgs{}
-//				args.Term = rf.getCurrentTerm()
-//				args.LeaderId = rf.me
-//				reply := RequestEntityReply{}
-//				rf.xlog("向%v号服务器发送心跳，时间戳为：%v", i, time.Now().UnixMilli())
-//				ok := rf.sendRequestEntity(i, &args, &reply)
-//				entityReply := EntityReply{
-//					RequestEntityReply: reply,
-//					Ok:                 ok,
-//				}
-//				ch <- entityReply
-//				group.Done()
-//			}(i)
-//		}
-//		group.Wait()
-//		close(ch)
-//		go func() {
-//			rf.RestartVoteEndTime()
-//			for reply := range ch {
-//				if !reply.Ok {
-//					rf.xlog("服务器%v无响应", reply.RequestEntityReply.FollowerId)
-//					continue
-//				}
-//				if reply.RequestEntityReply.Success {
-//					continue
-//				}
-//				// TODO 目前就是直接更新term
-//				rf.setCurrentTerm(reply.RequestEntityReply.Term)
-//				rf.setMembership(FOLLOWER)
-//				break
-//			}
-//		}()
-//
-//		time.Sleep(time.Duration(HEARTBEAT_DURATION) * time.Millisecond)
-//	}
-const DEBUG = true
+const DEBUG = false
 
 func (rf *Raft) xlog(desc string, v ...interface{}) {
+
 	if DEBUG {
 		s := "candidate"
-		if rf.getMembership() == FOLLOWER {
+		if rf.memberShip == FOLLOWER {
 			s = "follower"
-		} else if rf.getMembership() == LEADER {
+		} else if rf.memberShip == LEADER {
 			s = "leader"
 		}
-		log.Printf(strconv.Itoa(GoID())+"-raft-"+strconv.Itoa(rf.me)+"-term-"+strconv.FormatInt(int64(rf.getCurrentTerm()), 10)+"-"+s+": "+desc+"\n", v...)
+		log.Printf(strconv.Itoa(GoID())+"-raft-"+strconv.Itoa(rf.me)+"-term-"+strconv.Itoa(rf.currentTerm)+"-"+s+": "+desc+"\n", v...)
 	}
 }
 func GoID() int {

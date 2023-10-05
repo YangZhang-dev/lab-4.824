@@ -1,0 +1,10 @@
+# all
+- 如果收到的响应或请求的term比自己的大，无论什么情况，都要设置新的term，然后把自己变为follower
+# election
+
+- 如果有一个更大的term发送投票请求，首先要将votefor设为null，更新term
+
+- 何时更新定时器
+  - 你从当前的领导者那里得到一个AppendEntries RPC（即，如果AppendEntries参数中的任期已经过时，你不应该重启你的计时器）
+  - 你正在开始一个选举
+  - 你授予另一个对等体一个投票。
