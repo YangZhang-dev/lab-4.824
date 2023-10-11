@@ -59,10 +59,10 @@ const (
 	BASE_VOTE_TIMEOUT  = 150
 	VOTE_TIMEOUT_RANGE = 150
 	HEARTBEAT_DURATION = 100
+	COMMIT_DURATION    = 50
 )
 const (
 	VOTE_NO = -1
-	NO_LOG  = -1
 )
 
 type Log struct {
@@ -71,9 +71,8 @@ type Log struct {
 	Content interface{}
 }
 type Logs struct {
-	LogList     []Log
-	CommitIndex int
-	mu          sync.RWMutex
+	LogList []Log
+	mu      sync.RWMutex
 }
 
 // Raft A Go object implementing a single Raft peer.
@@ -89,7 +88,7 @@ type Raft struct {
 	voteEndTime int64
 	currentTerm int
 	voteTimeout int64
-
+	lastApplied int
 	logs        Logs
 	nextIndex   []int
 	matchIndex  []int
@@ -98,7 +97,6 @@ type Raft struct {
 	majority      int
 	Rand          *rand.Rand
 	applyCh       chan ApplyMsg
-	EVMu          sync.RWMutex
 	VoteCond      *sync.Cond
 	HeartBeatCond *sync.Cond
 	// Your data here (2A, 2B, 2C).
@@ -114,172 +112,12 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		return -1, -1, false
 	}
 	rf.xlog("接收到app请求,log:%+v", command)
-	//go rf.storeCommand(command)
-	return rf.logs.getLastLogIndex() + 1, rf.currentTerm, true
-}
-func (rf *Raft) storeCommand(command interface{}) {
-	// store to local
 	rf.logs.storeLog(command, rf.currentTerm)
-	rf.EVMu.Lock()
-	defer rf.EVMu.Unlock()
-	//send copy request to all follower
-	ch := make(chan EntityReply, len(rf.peers))
-	for i := range rf.peers {
-
-		if i == rf.me {
-			continue
-		}
-
-		if rf.memberShip != LEADER {
-			return
-		}
-		go func(i int) {
-			defer func() {
-				if r := recover(); r != nil {
-					rf.xlog("error:%+v", r)
-				}
-			}()
-			logIndex := rf.logs.getLastLogIndex()
-			rf.xlog("准备向服务器%v发送idx：%v", i, logIndex)
-			l := rf.logs.getLastLog()
-			pre := rf.logs.getLogByIndex(logIndex - 1)
-			args := RequestEntityArgs{
-				LeaderId:     rf.me,
-				Term:         rf.currentTerm,
-				LeaderCommit: rf.commitIndex,
-				PrevLogTerm:  pre.Term,
-				PrevLogIndex: logIndex - 1,
-				Entry:        l,
-			}
-			reply := RequestEntityReply{}
-			ok := rf.sendRequestEntity(i, &args, &reply)
-			entityReply := EntityReply{
-				RequestEntityReply: reply,
-				Ok:                 ok,
-			}
-			rf.xlog("收到服务器%v对于log%v的结果（有可能无响应）", i, logIndex)
-			ch <- entityReply
-		}(i)
-	}
-	resCh := make(chan bool)
-	go func() {
-		count := 1
-		defer func() {
-			rf.xlog("所有的服务器响应都已经处理完毕")
-		}()
-		for reply := range ch {
-			followerId := reply.RequestEntityReply.FollowerId
-			if !reply.Ok {
-				rf.xlog("服务器无响应")
-				continue
-			}
-			if reply.RequestEntityReply.Success {
-				rf.xlog("服务器%v已经存储成功", followerId)
-				count++
-				rf.nextIndex[followerId]++
-				rf.matchIndex[followerId] = rf.nextIndex[followerId] - 1
-				if count >= rf.majority {
-					resCh <- true
-				}
-
-				continue
-			}
-			// current term less than follower
-			if rf.currentTerm < reply.RequestEntityReply.Term {
-				rf.xlog("我的term小，转换为follower")
-				rf.currentTerm = reply.RequestEntityReply.Term
-				rf.setMembership(FOLLOWER)
-				return
-			} else {
-				rf.xlog("follower log loss")
-				// follower log loss
-				//go rf.pursueLog(reply.RequestEntityReply.FollowerId)
-			}
-
-		}
-
-	}()
-	success := <-resCh
-	if success {
-		rf.xlog("取得大多数服务器的success，对log进行commit")
-		index := rf.logs.getLastLogIndex()
-
-		msg := ApplyMsg{
-			CommandValid: true,
-			Command:      command,
-			CommandIndex: index,
-		}
-		rf.commitIndex = index
-		// commit option
-		rf.applyCh <- msg
-		rf.xlog("当前的log：%+v", rf.logs.LogList)
-		rf.xlog("当前的nextIndex：%+v", rf.nextIndex)
-	} else {
-		rf.xlog("未取得大多数follower的success，无法进行commit")
-	}
-
-}
-func (rf *Raft) pursueLog(serverId int) {
-
-	rf.xlog("在term%v，开启对服务器%v的日志追赶,nextId:%v", rf.currentTerm, serverId, rf.nextIndex[serverId])
-	for {
-		logIndex := rf.nextIndex[serverId]
-		l := rf.logs.getLogByIndex(logIndex)
-		pre := rf.logs.getLogByIndex(logIndex - 1)
-		rf.xlog("寻找匹配点：本次发送logIndex：%v,preTerm:%v,log:%+v", logIndex, pre.Term, l)
-		args := RequestEntityArgs{
-			LeaderId:     rf.me,
-			Term:         rf.currentTerm,
-			LeaderCommit: rf.commitIndex,
-			PrevLogTerm:  pre.Term,
-			PrevLogIndex: logIndex - 1,
-			Entry:        l,
-		}
-		reply := RequestEntityReply{}
-		ok := rf.sendRequestEntity(serverId, &args, &reply)
-		if !ok {
-			rf.xlog("服务器%v无响应", serverId)
-			return
-		}
-		if reply.Success {
-			break
-		} else {
-			rf.nextIndex[serverId]--
-		}
-		time.Sleep(time.Duration(5) * time.Millisecond)
-	}
-	rf.xlog("找到最低同步点,nextId:%v,matchId:%v", rf.nextIndex[serverId], rf.matchIndex[serverId])
-	for rf.logs.getLastLogIndex() >= rf.nextIndex[serverId] {
-		logIndex := rf.nextIndex[serverId]
-		l := rf.logs.getLogByIndex(logIndex)
-		pre := rf.logs.getLogByIndex(logIndex - 1)
-		rf.xlog("日志追赶：本次发送logIndex：%v,pre:%+v,log:%+v", logIndex, pre, l)
-		args := RequestEntityArgs{
-			LeaderId:     rf.me,
-			Term:         rf.currentTerm,
-			LeaderCommit: rf.commitIndex,
-			PrevLogTerm:  pre.Term,
-			PrevLogIndex: logIndex - 1,
-			Entry:        l,
-		}
-		reply := RequestEntityReply{}
-		ok := rf.sendRequestEntity(serverId, &args, &reply)
-		if !ok {
-			rf.xlog("服务器%v无响应", serverId)
-			return
-		}
-		if reply.Success {
-			rf.nextIndex[serverId]++
-			rf.xlog("成功追赶日志")
-		} else {
-			rf.xlog("在追赶日志时发生错误：服务器%v", serverId)
-		}
-		time.Sleep(time.Duration(50) * time.Millisecond)
-	}
-	rf.matchIndex[serverId] = rf.nextIndex[serverId] - 1
+	//go rf.appendEntries(false)
+	return rf.logs.getLastLogIndex(), rf.currentTerm, true
 }
 
-func (rf *Raft) appendEntries() {
+func (rf *Raft) appendEntries(isHeartBeat bool) {
 	peers := rf.peers
 	me := rf.me
 	for {
@@ -305,50 +143,133 @@ func (rf *Raft) appendEntries() {
 				rf.nextIndex[i] = rf.logs.getLastLogIndex() + 1
 			}
 			rf.mu.Unlock()
+			go rf.applier()
 		}
-
+		rf.mu.RLock()
+		commitId := rf.commitIndex
+		term := rf.currentTerm
+		rf.xlog("next indexes is %+v", rf.nextIndex)
+		rf.mu.RUnlock()
 		for i := range peers {
 			if i == me {
 				continue
 			}
-			reply := RequestEntityReply{}
-			go func(serverId int) {
-				rf.mu.RLock()
-				logIndex := rf.nextIndex[serverId]
-				l := rf.logs.getLogByIndex(logIndex)
-				pre := rf.logs.getLogByIndex(logIndex - 1)
-				args := RequestEntityArgs{
-					LeaderId:     rf.me,
-					Term:         rf.currentTerm,
-					LeaderCommit: rf.commitIndex,
-					PrevLogTerm:  pre.Term,
-					PrevLogIndex: logIndex - 1,
-					Entry:        l,
-				}
-				rf.mu.RUnlock()
-				ok := rf.sendRequestEntity(serverId, &args, &reply)
-				if !ok {
-					return
-				}
-				rf.mu.Lock()
-				defer rf.mu.Unlock()
-				if reply.Term > rf.currentTerm {
-					rf.startNewTerm(reply.Term)
-					return
-				}
-				if reply.Success {
-					// TODO 当前就是直接加一，未来可能需要改变
-					rf.nextIndex[serverId]++
-					rf.matchIndex[serverId] = rf.nextIndex[serverId] - 1
-				} else {
-					rf.nextIndex[serverId]--
-				}
-			}(i)
+			go rf.leaderSendEntries(i, term, commitId)
+		}
+		if !isHeartBeat {
+			return
 		}
 		time.Sleep(time.Duration(HEARTBEAT_DURATION) * time.Millisecond)
 	}
 }
+func (rf *Raft) leaderSendEntries(serverId int, term int, commitId int) {
+	reply := RequestEntityReply{}
+	rf.mu.RLock()
+	logIndex := rf.nextIndex[serverId]
+	logs := make([]Log, 0)
+	for i := logIndex; i <= rf.logs.getLastLogIndex(); i++ {
+		logs = append(logs, rf.logs.getLogByIndex(i))
+	}
+	pre := rf.logs.getLogByIndex(logIndex - 1)
+	args := RequestEntityArgs{
+		LeaderId:     rf.me,
+		Term:         term,
+		LeaderCommit: commitId,
+		PrevLogTerm:  pre.Term,
+		PrevLogIndex: pre.Index,
+		Entries:      logs,
+	}
+	successNextIndex := rf.nextIndex[serverId] + len(logs)
+	rf.mu.RUnlock()
+	successMatchIndex := args.PrevLogIndex + len(logs)
+	rf.xlog("send to server%v, args: %+v", serverId, args)
+	ok := rf.sendRequestEntity(serverId, &args, &reply)
+	if !ok {
+		return
+	}
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	rf.xlog("reply from server%v,reply:%+v", serverId, reply)
+	if !reply.Success {
+		if !reply.Conflict {
+			if reply.Term > args.Term {
+				rf.startNewTerm(reply.Term)
+				return
+			}
+		} else {
+			rf.nextIndex[serverId] = reply.XIndex
+		}
+	} else {
+		if logs != nil || len(logs) != 0 {
+			rf.nextIndex[serverId] = successNextIndex
+			rf.matchIndex[serverId] = successMatchIndex
+			rf.commitHandler(rf.logs.getLastLogIndex(), args.Term)
+		}
+	}
+}
+func (rf *Raft) applier() {
+	for {
+		rf.mu.RLock()
+		memberShip := rf.memberShip
+		rf.mu.RUnlock()
+		if memberShip != LEADER {
+			rf.HeartBeatCond.L.Lock()
+			for {
+				rf.mu.RLock()
+				if rf.memberShip == LEADER {
+					rf.mu.RUnlock()
+					break
+				}
+				rf.mu.RUnlock()
+				rf.HeartBeatCond.Wait()
+			}
+			rf.HeartBeatCond.L.Unlock()
+		}
+		rf.mu.Lock()
 
+		for rf.commitIndex-rf.lastApplied > 0 {
+			rf.lastApplied++
+			msg := ApplyMsg{
+				CommandValid: true,
+				Command:      rf.logs.getLogByIndex(rf.lastApplied).Content,
+				CommandIndex: rf.lastApplied,
+			}
+			rf.xlog("apply a log:%+v", msg)
+			rf.applyCh <- msg
+		}
+
+		rf.mu.Unlock()
+		time.Sleep(time.Duration(COMMIT_DURATION) * time.Millisecond)
+	}
+}
+func (rf *Raft) commitHandler(index int, term int) {
+	if index <= rf.commitIndex {
+		return
+	}
+	//rf.xlog("args term %v, matchIndex:%+v, check Log index:%v Term:%v", term, rf.matchIndex, index, rf.logs.getLogByIndex(index).Term)
+	//rf.xlog("nextIndex is :%+v, logs is %+v", rf.nextIndex, rf.logs.LogList)
+	counter := 0
+	for serverId := range rf.peers {
+		if rf.logs.getLogByIndex(index).Term == term {
+			if serverId == rf.me {
+				counter++
+			} else {
+				matchIndex := rf.matchIndex[serverId]
+				//rf.xlog("server %v, index is: %v,matchIndex is %v", serverId, rf.logs.getLogByIndex(index).Term, matchIndex)
+				if matchIndex >= index {
+					counter++
+				}
+			}
+		}
+
+		if counter >= rf.majority {
+			rf.xlog("commit a log: %+v,majority is %v", rf.logs.getLogByIndex(index), rf.majority)
+			rf.commitIndex = index
+			return
+		}
+	}
+	rf.commitHandler(index-1, term)
+}
 func (rf *Raft) GetState() (int, bool) {
 	rf.mu.RLock()
 	defer rf.mu.RUnlock()
@@ -370,9 +291,8 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	log.SetFlags(log.Lmicroseconds)
 	// Your initialization code here (2A, 2B, 2C).
 	rf.setMembership(FOLLOWER)
-	rf.setMembership(FOLLOWER)
 	rf.RestartVoteEndTime()
-	t := len(peers) % 2
+	t := len(peers) / 2
 	rf.majority = t
 	if t != 0 {
 		rf.majority++
@@ -390,6 +310,6 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	// start ticker goroutine to start elections
 	go rf.ticker()
-	go rf.appendEntries()
+	go rf.appendEntries(true)
 	return rf
 }

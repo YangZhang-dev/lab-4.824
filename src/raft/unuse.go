@@ -74,6 +74,8 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 // should call killed() to check whether it should stop.
 func (rf *Raft) Kill() {
 	atomic.StoreInt32(&rf.dead, 1)
+	rf.mu.RLock()
+	defer rf.mu.RUnlock()
 	rf.xlog("当前日志%+v，commitIndex：%v", rf.logs.LogList, rf.commitIndex)
 	// Your code here, if desired.
 }
@@ -94,7 +96,7 @@ func (rf *Raft) xlog(desc string, v ...interface{}) {
 		} else if rf.memberShip == LEADER {
 			s = "leader"
 		}
-		log.Printf(strconv.Itoa(GoID())+"-raft-"+strconv.Itoa(rf.me)+"-term-"+strconv.Itoa(rf.currentTerm)+"-"+s+": "+desc+"\n", v...)
+		log.Printf(strconv.Itoa(GoID())+"-raft-"+strconv.Itoa(rf.me)+"-term-"+strconv.Itoa(rf.currentTerm)+"-"+s+"| "+desc+"\n", v...)
 	}
 }
 func GoID() int {

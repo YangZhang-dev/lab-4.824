@@ -13,17 +13,16 @@ type RequestEntityArgs struct {
 	LeaderCommit int
 	PrevLogTerm  int
 	PrevLogIndex int
-	Entry        Log
+	Entries      []Log
 }
 
 type RequestEntityReply struct {
 	FollowerId int
 	Term       int
+	Conflict   bool
+	XTerm      int
+	XIndex     int
 	Success    bool
-}
-type EntityReply struct {
-	RequestEntityReply RequestEntityReply
-	Ok                 bool
 }
 
 type RequestVoteArgs struct {
@@ -34,12 +33,14 @@ type RequestVoteArgs struct {
 }
 
 func (rf *Raft) RequestEntity(args *RequestEntityArgs, reply *RequestEntityReply) {
+	rf.xlog("get EV request,args:%+v", args)
 	term := args.Term
 	prevLogIndex := args.PrevLogIndex
 	prevLogTerm := args.PrevLogTerm
 	leaderCommit := args.LeaderCommit
-	entry := args.Entry
+	entries := args.Entries
 	reply.Success = false
+	reply.Conflict = false
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	reply.FollowerId = rf.me
@@ -54,22 +55,51 @@ func (rf *Raft) RequestEntity(args *RequestEntityArgs, reply *RequestEntityReply
 	rf.RestartVoteEndTime()
 	rf.setMembership(FOLLOWER)
 
-	l := rf.logs.getLastLog()
-	if l.Index != prevLogIndex || l.Term != prevLogTerm {
+	l := rf.logs.getLogByIndex(prevLogIndex)
+	//rf.xlog("for this log: leader idx:%v,term %v. follower idx:%v,term %v", prevLogIndex, prevLogTerm, l.Index, l.Term)
+	if l.Term != prevLogTerm {
+		reply.Conflict = true
+		xTerm := prevLogTerm
+		xIndex := prevLogIndex
+		for i := prevLogIndex; i > 0; i-- {
+			if rf.logs.getLogByIndex(i).Term != prevLogTerm {
+				break
+			}
+			xIndex = i
+		}
+		reply.XTerm = xTerm
+		reply.XIndex = xIndex
+		rf.xlog("term do not match,return false，xterm:%v,xindex:%v", xTerm, xIndex)
 		return
 	}
-	if entry != (Log{}) {
-		rf.logs.storeLog(entry.Content, term)
-		// TODO 更改为goroutine commit
-		msg := ApplyMsg{
-			CommandValid: true,
-			Command:      entry.Content,
-			CommandIndex: prevLogIndex + 1,
+	rf.xlog("last log index is :%v", rf.logs.getLastLog().Index)
+	if prevLogIndex != rf.logs.getLastLog().Index {
+		rf.xlog("current log is %+v", rf.logs.LogList)
+		rf.logs.removeLogs(prevLogIndex)
+		rf.xlog("remove logs,remain log is: %+v", rf.logs.LogList)
+	}
+	if entries != nil || len(entries) != 0 {
+		for _, entry := range entries {
+			rf.logs.storeLog(entry.Content, entry.Term)
 		}
-		rf.applyCh <- msg
+		rf.xlog("store log,current log is %+v", rf.logs.LogList)
+	}
+	if rf.commitIndex < leaderCommit {
+		if leaderCommit > rf.logs.getLastLogIndex() {
+			leaderCommit = rf.logs.getLastLogIndex()
+		}
+		for rf.commitIndex <= leaderCommit {
+			msg := ApplyMsg{
+				CommandValid: true,
+				Command:      rf.logs.getLogByIndex(rf.commitIndex).Content,
+				CommandIndex: rf.commitIndex,
+			}
+			rf.applyCh <- msg
+			rf.xlog("从leader%v,同步完成,msg:%+v", args.LeaderId, msg)
+			rf.commitIndex++
+		}
 		rf.commitIndex = leaderCommit
 	}
-
 	reply.Success = true
 }
 

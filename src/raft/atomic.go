@@ -48,7 +48,6 @@ func (lf *Logs) storeLog(command interface{}, term int) {
 		Content: command,
 		Index:   len(lf.LogList),
 	})
-
 }
 func (lf *Logs) removeLogs(startIndex int) {
 	lf.mu.Lock()

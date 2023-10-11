@@ -44,12 +44,16 @@ func (rf *Raft) ticker() {
 		select {
 		case <-ticker.C:
 			rf.mu.RLock()
+			if rf.memberShip == LEADER {
+				rf.mu.RUnlock()
+				break
+			}
 			timeout, duration := checkTime(rf.voteEndTime, rf.voteTimeout)
 			rf.mu.RUnlock()
 			if timeout {
 				rf.election()
 			} else {
-				ticker.Reset(duration - time.Duration(5)*time.Microsecond)
+				ticker.Reset(duration)
 			}
 		}
 	}
@@ -57,6 +61,7 @@ func (rf *Raft) ticker() {
 }
 func (rf *Raft) election() {
 	rf.mu.Lock()
+	rf.xlog("start a election")
 	rf.currentTerm++
 	rf.voteFor = rf.me
 
