@@ -22,19 +22,19 @@ func checkTime(lastTime, timeout int64) (bool, time.Duration) {
 func (rf *Raft) ticker() {
 	ticker := time.NewTicker(time.Duration(rf.voteTimeout) * time.Millisecond)
 	for rf.killed() == false {
-		rf.mu.RLock()
+		rf.mu.Lock()
 		memberShip := rf.memberShip
 		voteTimeout := rf.voteTimeout
-		rf.mu.RUnlock()
+		rf.mu.Unlock()
 		if memberShip == LEADER {
 			rf.VoteCond.L.Lock()
 			for {
-				rf.mu.RLock()
+				rf.mu.Lock()
 				if rf.memberShip != LEADER {
-					rf.mu.RUnlock()
+					rf.mu.Unlock()
 					break
 				}
-				rf.mu.RUnlock()
+				rf.mu.Unlock()
 				rf.VoteCond.Wait()
 			}
 			rf.VoteCond.L.Unlock()
@@ -43,13 +43,13 @@ func (rf *Raft) ticker() {
 
 		select {
 		case <-ticker.C:
-			rf.mu.RLock()
+			rf.mu.Lock()
 			if rf.memberShip == LEADER {
-				rf.mu.RUnlock()
+				rf.mu.Unlock()
 				break
 			}
 			timeout, duration := checkTime(rf.voteEndTime, rf.voteTimeout)
-			rf.mu.RUnlock()
+			rf.mu.Unlock()
 			if timeout {
 				rf.election()
 			} else {
@@ -64,7 +64,7 @@ func (rf *Raft) election() {
 	rf.xlog("start a election")
 	rf.currentTerm++
 	rf.voteFor = rf.me
-
+	rf.persist()
 	if rf.memberShip == CANDIDATE {
 		rf.voteTimeout = int64(rf.Rand.Intn(VOTE_TIMEOUT_RANGE) + BASE_VOTE_TIMEOUT)
 	}
@@ -77,28 +77,37 @@ func (rf *Raft) election() {
 func (rf *Raft) electionHandler() {
 	counter := 1
 	lastLog := rf.logs.getLastLog()
-	rf.mu.RLock()
+	rf.mu.Lock()
 	args := RequestVoteArgs{
 		Term:         rf.currentTerm,
 		CandidateId:  rf.me,
 		LastLogIndex: lastLog.Index,
 		LastLogTerm:  lastLog.Term,
 	}
-	rf.mu.RUnlock()
+	rf.mu.Unlock()
 	for i := range rf.peers {
 		if i == rf.me {
 			continue
 		}
 		go func(serverId int, counter *int) {
 			reply := RequestVoteReply{}
-			ok := rf.sendRequestVote(serverId, &args, &reply)
 			rf.mu.Lock()
-			defer rf.mu.Unlock()
+			if rf.memberShip != CANDIDATE {
+				rf.mu.Unlock()
+				return
+			}
+			rf.mu.Unlock()
+			ok := rf.sendRequestVote(serverId, &args, &reply)
 			if !ok {
 				return
 			}
+			rf.mu.Lock()
+			defer rf.mu.Unlock()
 			if reply.Term > rf.currentTerm {
 				rf.startNewTerm(reply.Term)
+				return
+			}
+			if args.Term != rf.currentTerm || rf.memberShip != CANDIDATE {
 				return
 			}
 			if reply.VoteGranted {
@@ -116,4 +125,5 @@ func (rf *Raft) startNewTerm(term int) {
 	rf.currentTerm = term
 	rf.setMembership(FOLLOWER)
 	rf.voteFor = VOTE_NO
+	rf.persist()
 }

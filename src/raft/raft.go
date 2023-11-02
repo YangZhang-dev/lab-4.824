@@ -1,43 +1,17 @@
 package raft
 
-//
-// this is an outline of the API that raft must expose to
-// the service (or tester). see comments below for
-// each of these functions for more details.
-//
-// rf = Make(...)
-//   create a new Raft server.
-// rf.Start(command interface{}) (index, term, isleader)
-//   start agreement on a new log entry
-// rf.GetState() (term, isLeader)
-//   ask a Raft for its current term, and whether it thinks it is leader
-// ApplyMsg
-//   each time a new entry is committed to the log, each Raft peer
-//   should send an ApplyMsg to the service (or tester)
-//   in the same server.
-//
-
 import (
 	"log"
 	"math/rand"
 	"os"
+	"sync/atomic"
+
 	//	"bytes"
 	"sync"
-	"time"
-
 	//	"6.824/labgob"
 	"6.824/labrpc"
 )
 
-// as each Raft peer becomes aware that successive log entries are
-// committed, the peer should send an ApplyMsg to the service (or
-// tester) on the same server, via the applyCh passed to Make(). set
-// CommandValid to true to indicate that the ApplyMsg contains a newly
-// committed log entry.
-//
-// in part 2D you'll want to send other kinds of messages (e.g.,
-// snapshots) on the applyCh, but set CommandValid to false for these
-// other uses.
 type ApplyMsg struct {
 	CommandValid bool
 	Command      interface{}
@@ -59,7 +33,7 @@ const (
 	BASE_VOTE_TIMEOUT  = 150
 	VOTE_TIMEOUT_RANGE = 150
 	HEARTBEAT_DURATION = 100
-	COMMIT_DURATION    = 50
+	APPLY_DURATION     = 30
 )
 const (
 	VOTE_NO = -1
@@ -71,208 +45,45 @@ type Log struct {
 	Content interface{}
 }
 type Logs struct {
-	LogList []Log
-	mu      sync.RWMutex
+	LogList           []Log
+	lastIncludedTerm  int
+	lastIncludedIndex int
+	mu                sync.RWMutex
 }
 
-// Raft A Go object implementing a single Raft peer.
 type Raft struct {
-	mu        sync.RWMutex        // Lock to protect shared access to this peer's state
-	peers     []*labrpc.ClientEnd // RPC end points of all peers
-	persister *Persister          // Object to hold this peer's persisted state
-	me        int                 // this peer's index into peers[]
-	dead      int32               // set by Kill()
+	mu        sync.Mutex
+	peers     []*labrpc.ClientEnd
+	persister *Persister
+	me        int
+	dead      int32
 
-	voteFor     int
-	memberShip  int
-	voteEndTime int64
+	// --------persistent state---------------
 	currentTerm int
-	voteTimeout int64
-	lastApplied int
+	voteFor     int
 	logs        Logs
+
+	// --------volatile state---------------
+	commitIndex int
+	lastApplied int
 	nextIndex   []int
 	matchIndex  []int
-	commitIndex int
 
+	memberShip    int
+	voteEndTime   int64
+	voteTimeout   int64
 	majority      int
 	Rand          *rand.Rand
 	applyCh       chan ApplyMsg
+	sendCh        chan ApplyMsg
 	VoteCond      *sync.Cond
 	HeartBeatCond *sync.Cond
-	// Your data here (2A, 2B, 2C).
-	// Look at the paper's Figure 2 for a description of what
-	// state a Raft server must maintain.
-
+	ApplyCond     *sync.Cond
 }
 
-func (rf *Raft) Start(command interface{}) (int, int, bool) {
-	rf.mu.RLock()
-	defer rf.mu.RUnlock()
-	if rf.memberShip != LEADER {
-		return -1, -1, false
-	}
-	rf.xlog("接收到app请求,log:%+v", command)
-	rf.logs.storeLog(command, rf.currentTerm)
-	//go rf.appendEntries(false)
-	return rf.logs.getLastLogIndex(), rf.currentTerm, true
-}
-
-func (rf *Raft) appendEntries(isHeartBeat bool) {
-	peers := rf.peers
-	me := rf.me
-	for {
-		rf.mu.RLock()
-		memberShip := rf.memberShip
-		rf.mu.RUnlock()
-		if memberShip != LEADER {
-			rf.HeartBeatCond.L.Lock()
-			for {
-				rf.mu.RLock()
-				if rf.memberShip == LEADER {
-					rf.mu.RUnlock()
-					break
-				}
-				rf.mu.RUnlock()
-				rf.HeartBeatCond.Wait()
-			}
-			rf.HeartBeatCond.L.Unlock()
-			rf.mu.Lock()
-			rf.matchIndex = make([]int, len(rf.peers))
-			rf.nextIndex = make([]int, len(rf.peers))
-			for i := range rf.nextIndex {
-				rf.nextIndex[i] = rf.logs.getLastLogIndex() + 1
-			}
-			rf.mu.Unlock()
-			go rf.applier()
-		}
-		rf.mu.RLock()
-		commitId := rf.commitIndex
-		term := rf.currentTerm
-		rf.xlog("next indexes is %+v", rf.nextIndex)
-		rf.mu.RUnlock()
-		for i := range peers {
-			if i == me {
-				continue
-			}
-			go rf.leaderSendEntries(i, term, commitId)
-		}
-		if !isHeartBeat {
-			return
-		}
-		time.Sleep(time.Duration(HEARTBEAT_DURATION) * time.Millisecond)
-	}
-}
-func (rf *Raft) leaderSendEntries(serverId int, term int, commitId int) {
-	reply := RequestEntityReply{}
-	rf.mu.RLock()
-	logIndex := rf.nextIndex[serverId]
-	logs := make([]Log, 0)
-	for i := logIndex; i <= rf.logs.getLastLogIndex(); i++ {
-		logs = append(logs, rf.logs.getLogByIndex(i))
-	}
-	pre := rf.logs.getLogByIndex(logIndex - 1)
-	args := RequestEntityArgs{
-		LeaderId:     rf.me,
-		Term:         term,
-		LeaderCommit: commitId,
-		PrevLogTerm:  pre.Term,
-		PrevLogIndex: pre.Index,
-		Entries:      logs,
-	}
-	successNextIndex := rf.nextIndex[serverId] + len(logs)
-	rf.mu.RUnlock()
-	successMatchIndex := args.PrevLogIndex + len(logs)
-	rf.xlog("send to server%v, args: %+v", serverId, args)
-	ok := rf.sendRequestEntity(serverId, &args, &reply)
-	if !ok {
-		return
-	}
+func (rf *Raft) GetState() (int, bool) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	rf.xlog("reply from server%v,reply:%+v", serverId, reply)
-	if !reply.Success {
-		if !reply.Conflict {
-			if reply.Term > args.Term {
-				rf.startNewTerm(reply.Term)
-				return
-			}
-		} else {
-			rf.nextIndex[serverId] = reply.XIndex
-		}
-	} else {
-		if logs != nil || len(logs) != 0 {
-			rf.nextIndex[serverId] = successNextIndex
-			rf.matchIndex[serverId] = successMatchIndex
-			rf.commitHandler(rf.logs.getLastLogIndex(), args.Term)
-		}
-	}
-}
-func (rf *Raft) applier() {
-	for {
-		rf.mu.RLock()
-		memberShip := rf.memberShip
-		rf.mu.RUnlock()
-		if memberShip != LEADER {
-			rf.HeartBeatCond.L.Lock()
-			for {
-				rf.mu.RLock()
-				if rf.memberShip == LEADER {
-					rf.mu.RUnlock()
-					break
-				}
-				rf.mu.RUnlock()
-				rf.HeartBeatCond.Wait()
-			}
-			rf.HeartBeatCond.L.Unlock()
-		}
-		rf.mu.Lock()
-
-		for rf.commitIndex-rf.lastApplied > 0 {
-			rf.lastApplied++
-			msg := ApplyMsg{
-				CommandValid: true,
-				Command:      rf.logs.getLogByIndex(rf.lastApplied).Content,
-				CommandIndex: rf.lastApplied,
-			}
-			rf.xlog("apply a log:%+v", msg)
-			rf.applyCh <- msg
-		}
-
-		rf.mu.Unlock()
-		time.Sleep(time.Duration(COMMIT_DURATION) * time.Millisecond)
-	}
-}
-func (rf *Raft) commitHandler(index int, term int) {
-	if index <= rf.commitIndex {
-		return
-	}
-	//rf.xlog("args term %v, matchIndex:%+v, check Log index:%v Term:%v", term, rf.matchIndex, index, rf.logs.getLogByIndex(index).Term)
-	//rf.xlog("nextIndex is :%+v, logs is %+v", rf.nextIndex, rf.logs.LogList)
-	counter := 0
-	for serverId := range rf.peers {
-		if rf.logs.getLogByIndex(index).Term == term {
-			if serverId == rf.me {
-				counter++
-			} else {
-				matchIndex := rf.matchIndex[serverId]
-				//rf.xlog("server %v, index is: %v,matchIndex is %v", serverId, rf.logs.getLogByIndex(index).Term, matchIndex)
-				if matchIndex >= index {
-					counter++
-				}
-			}
-		}
-
-		if counter >= rf.majority {
-			rf.xlog("commit a log: %+v,majority is %v", rf.logs.getLogByIndex(index), rf.majority)
-			rf.commitIndex = index
-			return
-		}
-	}
-	rf.commitHandler(index-1, term)
-}
-func (rf *Raft) GetState() (int, bool) {
-	rf.mu.RLock()
-	defer rf.mu.RUnlock()
 	return rf.currentTerm, rf.memberShip == LEADER
 }
 func Make(peers []*labrpc.ClientEnd, me int,
@@ -299,17 +110,34 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	}
 	rf.VoteCond = sync.NewCond(&sync.Mutex{})
 	rf.HeartBeatCond = sync.NewCond(&sync.Mutex{})
+	rf.ApplyCond = sync.NewCond(&sync.Mutex{})
 	rf.voteFor = VOTE_NO
 	rf.Rand = rand.New(rand.NewSource(int64(rf.me * rand.Int())))
 	rf.voteTimeout = int64(rf.Rand.Intn(VOTE_TIMEOUT_RANGE) + BASE_VOTE_TIMEOUT)
 	rf.logs = Logs{
-		LogList: make([]Log, 1),
+		LogList: make([]Log, 0),
 	}
+
+	rf.logs.lastIncludedIndex = 0
+	rf.logs.lastIncludedTerm = 0
+	rf.sendCh = make(chan ApplyMsg, 100)
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
 
 	// start ticker goroutine to start elections
 	go rf.ticker()
 	go rf.appendEntries(true)
+	go rf.applier()
 	return rf
+}
+func (rf *Raft) Kill() {
+	atomic.StoreInt32(&rf.dead, 1)
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	rf.xlog("当前日志%+v，commitIndex：%v,snapshotIndex is %d", rf.logs.LogList, rf.commitIndex, rf.logs.lastIncludedIndex)
+}
+
+func (rf *Raft) killed() bool {
+	z := atomic.LoadInt32(&rf.dead)
+	return z == 1
 }
