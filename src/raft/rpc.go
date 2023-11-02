@@ -200,6 +200,9 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 	if term > rf.currentTerm {
 		rf.startNewTerm(term)
 	}
+	if lastIncludedIndex <= rf.commitIndex {
+		return
+	}
 	rf.logs.lastIncludedIndex = lastIncludedIndex
 	rf.logs.lastIncludedTerm = lastIncludedTerm
 	applyMsg := ApplyMsg{
