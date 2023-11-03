@@ -62,13 +62,13 @@ func (rf *Raft) appendEntries(isHeartBeat bool) {
 		rf.mu.Lock()
 		commitId := rf.commitIndex
 		term := rf.currentTerm
-		rf.xlog("before send,next indexes is %+v,match indexes is %+v", rf.nextIndex, rf.matchIndex)
+		rf.xlog("before send,next indexes is %+v,match indexes is %+v，logList is %+v", rf.nextIndex, rf.matchIndex, rf.logs.LogList)
 		rf.mu.Unlock()
 		for i := range peers {
 			if i == me {
 				continue
 			}
-			go rf.leaderSendEntries(i, term, commitId)
+			go rf.leaderSendEntries(i, term, commitId, rf.logs.lastIncludedIndex)
 		}
 		if !isHeartBeat {
 			return
@@ -76,21 +76,22 @@ func (rf *Raft) appendEntries(isHeartBeat bool) {
 		time.Sleep(time.Duration(HEARTBEAT_DURATION) * time.Millisecond)
 	}
 }
-func (rf *Raft) leaderSendEntries(serverId int, term int, commitId int) {
+func (rf *Raft) leaderSendEntries(serverId, term, commitId, lastIncludedIndex int) {
 	reply := RequestEntityReply{}
 	logs := make([]Log, 0)
 	rf.mu.Lock()
-	logIndex := rf.nextIndex[serverId]
-	if logIndex <= rf.logs.lastIncludedIndex {
+
+	nextIndex := rf.nextIndex[serverId]
+	if nextIndex <= lastIncludedIndex {
 		go rf.snapshotHandler(serverId)
 		rf.mu.Unlock()
 		return
 	}
-	for i := logIndex; i <= rf.logs.getLastLogIndex(); i++ {
+	for i := nextIndex; i <= rf.logs.getLastLogIndex(); i++ {
 		logs = append(logs, rf.logs.getLogByIndex(i))
 	}
-	pre := rf.logs.getLogByIndex(logIndex - 1)
-	successNextIndex := logIndex + len(logs)
+	pre := rf.logs.getLogByIndex(nextIndex - 1)
+	successNextIndex := nextIndex + len(logs)
 	if rf.memberShip != LEADER {
 		rf.mu.Unlock()
 		return
@@ -121,14 +122,17 @@ func (rf *Raft) leaderSendEntries(serverId int, term int, commitId int) {
 		rf.startNewTerm(reply.Term)
 		return
 	}
-	if args.Term != rf.currentTerm || rf.memberShip != LEADER || logIndex != rf.nextIndex[serverId] {
+	if args.Term != rf.currentTerm ||
+		rf.memberShip != LEADER ||
+		nextIndex != rf.nextIndex[serverId] ||
+		rf.logs.lastIncludedIndex != lastIncludedIndex {
 		return
 	}
 
 	rf.xlog("reply from server%v,reply:%+v", serverId, reply)
 	if !reply.Success {
 		if reply.Conflict {
-			if reply.XIndex <= rf.logs.lastIncludedIndex {
+			if reply.XIndex <= lastIncludedIndex {
 				rf.xlog("start snapshot for server %d, index %d", serverId, reply.XIndex)
 				go rf.snapshotHandler(serverId)
 			} else {

@@ -3,7 +3,7 @@ package raft
 func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int, snapshot []byte) bool {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	if lastIncludedTerm != rf.logs.lastIncludedTerm || lastIncludedIndex != rf.logs.lastIncludedIndex {
+	if lastIncludedTerm != rf.logs.tLastIncludedTerm || lastIncludedIndex != rf.logs.tLastIncludedIndex {
 		rf.mu.Unlock()
 		rf.xlog("snapshot uninstall oldTerm %d,newTerm %d,oldIndex %d,newIndex %d", lastIncludedTerm, rf.logs.lastIncludedTerm, lastIncludedIndex, rf.logs.lastIncludedIndex)
 		return false
@@ -12,12 +12,16 @@ func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int,
 		rf.lastApplied = lastIncludedIndex
 		rf.commitIndex = lastIncludedIndex
 	}
-	rf.logs.removeHeadLogs(lastIncludedIndex + 1)
+	rf.xlog("remove from index %d", rf.logs.lastIncludedIndex+1)
+	rf.logs.removeHeadLogs(rf.logs.tLastIncludedIndex + 1)
+
+	rf.logs.lastIncludedIndex = lastIncludedIndex
+	rf.logs.lastIncludedTerm = lastIncludedTerm
 	rf.persister.mu.Lock()
 	rf.persister.snapshot = snapshot
 	rf.persister.mu.Unlock()
 	rf.persist()
-	rf.xlog("snapshot install")
+	rf.xlog("snapshot install,current log is %+v", rf.logs.LogList)
 	return true
 }
 
@@ -27,6 +31,10 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	defer rf.mu.Unlock()
 	rf.logs.lastIncludedTerm = rf.logs.getLogByIndex(index).Term
 	rf.xlog("log %+v,request index is %d", rf.logs.LogList, index)
+	// 0--15
+	// 10
+	// 10-0=10
+	// 10--15
 	rf.logs.removeHeadLogs(index + 1)
 	rf.logs.lastIncludedIndex = index
 	rf.persister.mu.Lock()

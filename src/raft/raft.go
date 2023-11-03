@@ -33,7 +33,6 @@ const (
 	BASE_VOTE_TIMEOUT  = 150
 	VOTE_TIMEOUT_RANGE = 150
 	HEARTBEAT_DURATION = 100
-	APPLY_DURATION     = 30
 )
 const (
 	VOTE_NO = -1
@@ -45,10 +44,12 @@ type Log struct {
 	Content interface{}
 }
 type Logs struct {
-	LogList           []Log
-	lastIncludedTerm  int
-	lastIncludedIndex int
-	mu                sync.RWMutex
+	LogList            []Log
+	lastIncludedTerm   int
+	tLastIncludedTerm  int
+	lastIncludedIndex  int
+	tLastIncludedIndex int
+	mu                 sync.RWMutex
 }
 
 type Raft struct {

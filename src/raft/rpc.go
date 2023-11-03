@@ -1,7 +1,6 @@
 package raft
 
 type RequestVoteReply struct {
-	// Your data here (2A).
 	FollowerId  int
 	VoteGranted bool
 	Term        int
@@ -57,7 +56,10 @@ func (rf *Raft) RequestEntity(args *RequestEntityArgs, reply *RequestEntityReply
 	reply.Success = false
 	reply.Conflict = false
 	rf.mu.Lock()
-	defer rf.mu.Unlock()
+	defer func() {
+		rf.persist()
+		rf.mu.Unlock()
+	}()
 	reply.FollowerId = rf.me
 	reply.Term = rf.currentTerm
 	if term > rf.currentTerm {
@@ -69,6 +71,11 @@ func (rf *Raft) RequestEntity(args *RequestEntityArgs, reply *RequestEntityReply
 
 	rf.RestartVoteEndTime()
 	rf.setMembership(FOLLOWER)
+
+	//if prevLogIndex != 0 && prevLogIndex <= rf.logs.lastIncludedIndex {
+	//	reply.Success = true
+	//	return
+	//}
 
 	l := rf.logs.getLogByIndex(prevLogIndex)
 	if l.Term != prevLogTerm {
@@ -143,7 +150,6 @@ func (rf *Raft) RequestEntity(args *RequestEntityArgs, reply *RequestEntityReply
 		rf.lastApplied = rf.commitIndex
 		rf.xlog("从leader%v,同步完成,log is %+v", args.LeaderId, rf.logs.LogList)
 	}
-	rf.persist()
 	reply.Success = true
 }
 
@@ -166,7 +172,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		rf.startNewTerm(term)
 	}
 
-	if rf.voteFor != -1 && rf.voteFor != candidateId {
+	if rf.voteFor != VOTE_NO && rf.voteFor != candidateId {
 		return
 	}
 	lastLog := rf.logs.getLastLog()
@@ -200,11 +206,11 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 	if term > rf.currentTerm {
 		rf.startNewTerm(term)
 	}
-	if lastIncludedIndex <= rf.commitIndex {
+	if lastIncludedIndex <= rf.logs.lastIncludedIndex {
 		return
 	}
-	rf.logs.lastIncludedIndex = lastIncludedIndex
-	rf.logs.lastIncludedTerm = lastIncludedTerm
+	rf.logs.tLastIncludedIndex = lastIncludedIndex
+	rf.logs.tLastIncludedTerm = lastIncludedTerm
 	applyMsg := ApplyMsg{
 		SnapshotValid: true,
 		Snapshot:      data,
@@ -212,6 +218,7 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 		SnapshotIndex: lastIncludedIndex,
 	}
 	rf.sendCh <- applyMsg
+	rf.xlog("已完成snapshot request，wait install,current log is %+v", rf.logs.LogList)
 }
 
 func (rf *Raft) sendRequestEntity(server int, args *RequestEntityArgs, reply *RequestEntityReply) bool {
