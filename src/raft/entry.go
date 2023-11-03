@@ -68,7 +68,7 @@ func (rf *Raft) appendEntries(isHeartBeat bool) {
 			if i == me {
 				continue
 			}
-			go rf.leaderSendEntries(i, term, commitId, rf.logs.lastIncludedIndex)
+			go rf.leaderSendEntries(i, term, commitId)
 		}
 		if !isHeartBeat {
 			return
@@ -76,11 +76,12 @@ func (rf *Raft) appendEntries(isHeartBeat bool) {
 		time.Sleep(time.Duration(HEARTBEAT_DURATION) * time.Millisecond)
 	}
 }
-func (rf *Raft) leaderSendEntries(serverId, term, commitId, lastIncludedIndex int) {
+func (rf *Raft) leaderSendEntries(serverId, term, commitId int) {
 	reply := RequestEntityReply{}
 	logs := make([]Log, 0)
 	rf.mu.Lock()
 
+	lastIncludedIndex := rf.logs.lastIncludedIndex
 	nextIndex := rf.nextIndex[serverId]
 	if nextIndex <= lastIncludedIndex {
 		go rf.snapshotHandler(serverId)
