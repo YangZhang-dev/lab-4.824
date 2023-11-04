@@ -111,6 +111,7 @@ func (rf *Raft) electionHandler() {
 				return
 			}
 			if reply.VoteGranted {
+				rf.xlog("get server %d vote", reply.FollowerId)
 				*counter++
 			}
 			if *counter >= rf.majority {

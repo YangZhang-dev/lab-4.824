@@ -19,7 +19,6 @@ type RequestEntityReply struct {
 	FollowerId int
 	Term       int
 	Conflict   bool
-	XTerm      int
 	XIndex     int
 	Success    bool
 }
@@ -42,11 +41,7 @@ type InstallSnapshotReply struct {
 }
 
 func (rf *Raft) RequestEntity(args *RequestEntityArgs, reply *RequestEntityReply) {
-	if len(args.Entries) >= 1 {
-		rf.xlog("get EV request,leader %d,first log is %+v, last log is %+v", args.LeaderId, args.Entries[:1], args.Entries[len(args.Entries)-1:])
-	} else {
-		rf.xlog("get EV request,leader %d, args %+v", args.LeaderId, args)
-	}
+
 	//rf.xlog("current log is %+v", rf.logs.LogList)
 	term := args.Term
 	prevLogIndex := args.PrevLogIndex
@@ -60,6 +55,12 @@ func (rf *Raft) RequestEntity(args *RequestEntityArgs, reply *RequestEntityReply
 		rf.persist()
 		rf.mu.Unlock()
 	}()
+
+	if len(args.Entries) >= 1 {
+		rf.xlog("get EV request,leader %d, args %+v,first log is %+v, last log is %+v", args.LeaderId, args, args.Entries[:1], args.Entries[len(args.Entries)-1:])
+	} else {
+		rf.xlog("get EV request,leader %d, args %+v", args.LeaderId, args)
+	}
 	reply.FollowerId = rf.me
 	reply.Term = rf.currentTerm
 	if term > rf.currentTerm {
@@ -72,65 +73,51 @@ func (rf *Raft) RequestEntity(args *RequestEntityArgs, reply *RequestEntityReply
 	rf.RestartVoteEndTime()
 	rf.setMembership(FOLLOWER)
 
-	//if prevLogIndex != 0 && prevLogIndex <= rf.logs.lastIncludedIndex {
-	//	reply.Success = true
-	//	return
-	//}
-
 	l := rf.logs.getLogByIndex(prevLogIndex)
 	if l.Term != prevLogTerm {
+		rf.xlog("get conflict")
 		reply.Conflict = true
-		xTerm := prevLogTerm
 		xIndex := prevLogIndex
-		firstTerm := 0
-
-		for i := prevLogIndex; i > 0; i-- {
-			if i <= rf.logs.lastIncludedIndex {
-				xIndex = i
-				rf.xlog("from index %d start snapshot", i)
-				break
-			}
-			log := rf.logs.getLogByIndex(i)
-			if (log == Log{}) {
-				xIndex = i
-				xTerm = log.Term
-			} else {
-				firstTerm = log.Term
-				break
-			}
+		if prevLogIndex <= rf.logs.lastIncludedIndex {
+			reply.XIndex = xIndex
+			rf.xlog("from index %d start snapshot", prevLogIndex)
+			return
 		}
+
+		// A
+		lastLog := rf.logs.getLastLog()
+		if lastLog.Index < prevLogIndex {
+			xIndex = lastLog.Index + 1
+			reply.XIndex = xIndex
+			rf.xlog("SEC A, xindex is %+v", xIndex)
+			return
+		}
+		// C
+		rf.xlog("SEC C")
+		tailTerm := l.Term
 		rf.xlog("get conflict term tail index %d", xIndex)
-		for i := xIndex - 1; i > 0; i-- {
+		for i := xIndex - 1; i > rf.commitIndex; i-- {
 			if i <= rf.logs.lastIncludedIndex {
 				rf.xlog("from index %d start snapshot", i)
 				break
 			}
 			log := rf.logs.getLogByIndex(i)
-			if firstTerm != log.Term {
-				rf.xlog("not match ,firstTerm: %d,logTerm %d", firstTerm, log.Term)
+			if tailTerm != log.Term {
+				rf.xlog("not match ,tailTerm: %d,logTerm %d", tailTerm, log.Term)
 				break
 			}
 			xIndex = i
-			xTerm = log.Term
 		}
 		rf.xlog("get conflict log head index %d", xIndex)
-		reply.XTerm = xTerm
 		reply.XIndex = xIndex
-		rf.xlog("term do not match,return false，xterm:%v,xindex:%v", xTerm, xIndex)
-		rf.xlog("my log is %+v", rf.logs.LogList)
+		rf.xlog("term do not match,return false，xindex:%v", xIndex)
 		return
 	}
-	//rf.xlog("last log index is :%v", rf.logs.getLastLog().Index)
-	if prevLogIndex != rf.logs.getLastLog().Index {
-		rf.xlog("current log is %+v", rf.logs.LogList)
-		rf.logs.removeTailLogs(prevLogIndex)
-		rf.xlog("remove log is %+v", rf.logs.LogList)
-	}
-	if entries != nil || len(entries) != 0 {
-		rf.logs.storeLog(entries...)
-		rf.xlog("store log,current log is %+v", rf.logs.LogList)
 
-	}
+	// B D
+	rf.logs.removeTailLogs(prevLogIndex)
+	rf.logs.storeLog(entries...)
+	rf.xlog("after store, current log is %+v", rf.logs.LogList)
 	if rf.commitIndex < leaderCommit {
 		if leaderCommit > rf.logs.getLastLogIndex() {
 			leaderCommit = rf.logs.getLastLogIndex()
@@ -147,6 +134,7 @@ func (rf *Raft) RequestEntity(args *RequestEntityArgs, reply *RequestEntityReply
 			rf.xlog("从leader%v,同步完成,msg:%+v", args.LeaderId, msg)
 		}
 		rf.commitIndex = leaderCommit
+		// TODO
 		rf.lastApplied = rf.commitIndex
 		rf.xlog("从leader%v,同步完成,log is %+v", args.LeaderId, rf.logs.LogList)
 	}

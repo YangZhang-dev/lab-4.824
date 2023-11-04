@@ -18,7 +18,6 @@ func (rf *Raft) setMembership(m int) {
 	}
 	if member != LEADER && m == LEADER {
 		rf.HeartBeatCond.Signal()
-		rf.ApplyCond.Signal()
 	}
 }
 func (lf *Logs) getLastLog() Log {
