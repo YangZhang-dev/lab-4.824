@@ -30,8 +30,8 @@ const (
 	FOLLOWER  = 3
 )
 const (
-	BASE_VOTE_TIMEOUT  = 150
-	VOTE_TIMEOUT_RANGE = 150
+	BASE_VOTE_TIMEOUT  = 500
+	VOTE_TIMEOUT_RANGE = 200
 	HEARTBEAT_DURATION = 100
 )
 const (
@@ -79,7 +79,6 @@ type Raft struct {
 	sendCh        chan ApplyMsg
 	VoteCond      *sync.Cond
 	HeartBeatCond *sync.Cond
-	ApplyCond     *sync.Cond
 }
 
 func (rf *Raft) GetState() (int, bool) {
@@ -111,7 +110,6 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	}
 	rf.VoteCond = sync.NewCond(&sync.Mutex{})
 	rf.HeartBeatCond = sync.NewCond(&sync.Mutex{})
-	rf.ApplyCond = sync.NewCond(&sync.Mutex{})
 	rf.voteFor = VOTE_NO
 	rf.Rand = rand.New(rand.NewSource(int64(rf.me * rand.Int())))
 	rf.voteTimeout = int64(rf.Rand.Intn(VOTE_TIMEOUT_RANGE) + BASE_VOTE_TIMEOUT)
