@@ -20,11 +20,9 @@ func (rf *Raft) persist() {
 	p.CurrentTerm = rf.currentTerm
 	p.VoteFor = rf.voteFor
 
-	rf.logs.mu.RLock()
 	p.LastIncludedIndex = rf.logs.lastIncludedIndex
 	p.LastIncludedTerm = rf.logs.lastIncludedTerm
 	p.LogList = rf.logs.LogList
-	rf.logs.mu.RUnlock()
 
 	rf.persister.mu.Lock()
 	snapshot := rf.persister.snapshot
@@ -47,11 +45,9 @@ func (rf *Raft) readPersist(data []byte) {
 		rf.mu.Lock()
 		rf.currentTerm = p.CurrentTerm
 		rf.voteFor = p.VoteFor
-		rf.logs.mu.Lock()
 		rf.logs.lastIncludedTerm = p.LastIncludedTerm
 		rf.logs.lastIncludedIndex = p.LastIncludedIndex
 		rf.logs.LogList = p.LogList
-		rf.logs.mu.Unlock()
 		rf.commitIndex = p.LastIncludedIndex
 		rf.lastApplied = p.LastIncludedIndex
 		rf.mu.Unlock()

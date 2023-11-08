@@ -70,8 +70,8 @@ func (rf *Raft) RequestEntity(args *RequestEntityArgs, reply *RequestEntityReply
 		return
 	}
 
-	rf.RestartVoteEndTime()
-	rf.setMembership(FOLLOWER)
+	rf.restartVoteEndTime()
+	rf.setState(FOLLOWER)
 
 	l := rf.logs.getLogByIndex(prevLogIndex)
 	if l.Term != prevLogTerm {
@@ -119,8 +119,9 @@ func (rf *Raft) RequestEntity(args *RequestEntityArgs, reply *RequestEntityReply
 	rf.logs.storeLog(entries...)
 	rf.xlog("after store, current log is %+v", rf.logs.LogList)
 	if rf.commitIndex < leaderCommit {
-		if leaderCommit > rf.logs.getLastLogIndex() {
-			leaderCommit = rf.logs.getLastLogIndex()
+		lastLogIndex := rf.logs.getLastLogIndex()
+		if leaderCommit > lastLogIndex {
+			leaderCommit = lastLogIndex
 		}
 
 		for rf.commitIndex < leaderCommit {
@@ -172,9 +173,9 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	}
 
 	reply.VoteGranted = true
-	rf.RestartVoteEndTime()
+	rf.restartVoteEndTime()
 	rf.voteFor = candidateId
-	rf.setMembership(FOLLOWER)
+	rf.setState(FOLLOWER)
 	rf.persist()
 }
 

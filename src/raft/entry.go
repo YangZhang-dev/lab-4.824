@@ -4,21 +4,24 @@ import "time"
 
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	rf.mu.Lock()
-	defer rf.mu.Unlock()
-	if rf.memberShip != LEADER {
+	if rf.state != LEADER {
+		rf.mu.Unlock()
 		return -1, -1, false
 	}
 	rf.xlog("接收到app请求,log:%+v", command)
 	index := rf.logs.getLastLogIndex() + 1
+	currentTerm := rf.currentTerm
 	rf.logs.storeLog(Log{
-		Term:    rf.currentTerm,
+		Term:    currentTerm,
 		Index:   index,
 		Content: command,
 	})
 	rf.xlog("current log index is %+v", index)
 	rf.persist()
 	rf.xlog("store down")
-	return index, rf.currentTerm, true
+	rf.mu.Unlock()
+	rf.appendEntries(false)
+	return index, currentTerm, true
 }
 func (rf *Raft) sendNoOp() {
 	if rf.logs.getLastLogIndex() > 1 && rf.logs.getLastLog().Term != rf.currentTerm {
@@ -36,20 +39,20 @@ func (rf *Raft) appendEntries(isHeartBeat bool) {
 	me := rf.me
 	for rf.killed() == false {
 		rf.mu.Lock()
-		memberShip := rf.memberShip
+		state := rf.state
 		rf.mu.Unlock()
-		if memberShip != LEADER {
-			rf.HeartBeatCond.L.Lock()
+		if state != LEADER {
+			rf.heartBeatCond.L.Lock()
 			for {
 				rf.mu.Lock()
-				if rf.memberShip == LEADER {
+				if rf.state == LEADER {
 					rf.mu.Unlock()
 					break
 				}
 				rf.mu.Unlock()
-				rf.HeartBeatCond.Wait()
+				rf.heartBeatCond.Wait()
 			}
-			rf.HeartBeatCond.L.Unlock()
+			rf.heartBeatCond.L.Unlock()
 			rf.mu.Lock()
 			rf.matchIndex = make([]int, len(rf.peers))
 			rf.nextIndex = make([]int, len(rf.peers))
@@ -93,7 +96,7 @@ func (rf *Raft) leaderSendEntries(serverId, term, commitId int) {
 	}
 	pre := rf.logs.getLogByIndex(nextIndex - 1)
 	successNextIndex := nextIndex + len(logs)
-	if rf.memberShip != LEADER {
+	if rf.state != LEADER {
 		rf.mu.Unlock()
 		return
 	}
@@ -124,7 +127,7 @@ func (rf *Raft) leaderSendEntries(serverId, term, commitId int) {
 		return
 	}
 	if args.Term != rf.currentTerm ||
-		rf.memberShip != LEADER ||
+		rf.state != LEADER ||
 		nextIndex != rf.nextIndex[serverId] ||
 		rf.logs.lastIncludedIndex != lastIncludedIndex {
 		return
@@ -149,7 +152,7 @@ func (rf *Raft) leaderSendEntries(serverId, term, commitId int) {
 
 func (rf *Raft) commitHandler(index int, term int) {
 	//rf.xlog("commit handler")
-	if index <= rf.commitIndex || rf.memberShip != LEADER {
+	if index <= rf.commitIndex || rf.state != LEADER {
 		return
 	}
 	//rf.xlog("args term %v, matchIndex:%+v, check Log index:%v Term:%v", term, rf.matchIndex, index, rf.logs.getLogByIndex(index).Term)

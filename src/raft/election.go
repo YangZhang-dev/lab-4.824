@@ -23,28 +23,28 @@ func (rf *Raft) ticker() {
 	ticker := time.NewTicker(time.Duration(rf.voteTimeout) * time.Millisecond)
 	for rf.killed() == false {
 		rf.mu.Lock()
-		memberShip := rf.memberShip
+		state := rf.state
 		voteTimeout := rf.voteTimeout
 		rf.mu.Unlock()
-		if memberShip == LEADER {
-			rf.VoteCond.L.Lock()
+		if state == LEADER {
+			rf.voteCond.L.Lock()
 			for {
 				rf.mu.Lock()
-				if rf.memberShip != LEADER {
+				if rf.state != LEADER {
 					rf.mu.Unlock()
 					break
 				}
 				rf.mu.Unlock()
-				rf.VoteCond.Wait()
+				rf.voteCond.Wait()
 			}
-			rf.VoteCond.L.Unlock()
+			rf.voteCond.L.Unlock()
 			ticker.Reset(time.Duration(voteTimeout) * time.Millisecond)
 		}
 
 		select {
 		case <-ticker.C:
 			rf.mu.Lock()
-			if rf.memberShip == LEADER {
+			if rf.state == LEADER {
 				rf.mu.Unlock()
 				break
 			}
@@ -65,19 +65,19 @@ func (rf *Raft) election() {
 	rf.currentTerm++
 	rf.voteFor = rf.me
 	rf.persist()
-	if rf.memberShip == CANDIDATE {
-		rf.voteTimeout = int64(rf.Rand.Intn(VOTE_TIMEOUT_RANGE) + BASE_VOTE_TIMEOUT)
+	if rf.state == CANDIDATE {
+		rf.voteTimeout = int64(rf.rand.Intn(VOTE_TIMEOUT_RANGE) + BASE_VOTE_TIMEOUT)
 	}
-	rf.RestartVoteEndTime()
-	rf.setMembership(CANDIDATE)
+	rf.restartVoteEndTime()
+	rf.setState(CANDIDATE)
 
 	rf.mu.Unlock()
 	go rf.electionHandler()
 }
 func (rf *Raft) electionHandler() {
 	counter := 1
-	lastLog := rf.logs.getLastLog()
 	rf.mu.Lock()
+	lastLog := rf.logs.getLastLog()
 	args := RequestVoteArgs{
 		Term:         rf.currentTerm,
 		CandidateId:  rf.me,
@@ -92,7 +92,7 @@ func (rf *Raft) electionHandler() {
 		go func(serverId int, counter *int) {
 			reply := RequestVoteReply{}
 			rf.mu.Lock()
-			if rf.memberShip != CANDIDATE {
+			if rf.state != CANDIDATE {
 				rf.mu.Unlock()
 				return
 			}
@@ -107,7 +107,7 @@ func (rf *Raft) electionHandler() {
 				rf.startNewTerm(reply.Term)
 				return
 			}
-			if args.Term != rf.currentTerm || rf.memberShip != CANDIDATE {
+			if args.Term != rf.currentTerm || rf.state != CANDIDATE {
 				return
 			}
 			if reply.VoteGranted {
@@ -115,7 +115,7 @@ func (rf *Raft) electionHandler() {
 				*counter++
 			}
 			if *counter >= rf.majority {
-				rf.setMembership(LEADER)
+				rf.setState(LEADER)
 			}
 		}(i, &counter)
 	}
@@ -124,7 +124,7 @@ func (rf *Raft) electionHandler() {
 // must lock
 func (rf *Raft) startNewTerm(term int) {
 	rf.currentTerm = term
-	rf.setMembership(FOLLOWER)
+	rf.setState(FOLLOWER)
 	rf.voteFor = VOTE_NO
 	rf.persist()
 }

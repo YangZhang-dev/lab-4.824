@@ -9,21 +9,21 @@ import (
 )
 
 const DEBUG = true
-const patch = true
+const patch = false
+const IsRaft = false
 
 func (rf *Raft) xlog(desc string, v ...interface{}) {
 	if DEBUG {
 		s := "candidate"
-		if rf.memberShip == FOLLOWER {
+		if rf.state == FOLLOWER {
 			s = "follower"
-		} else if rf.memberShip == LEADER {
+		} else if rf.state == LEADER {
 			s = "leader"
 		}
 		if patch {
 			fmt.Printf("raft-"+strconv.Itoa(rf.me)+"-go-"+strconv.Itoa(GoID())+"-term-"+strconv.Itoa(rf.currentTerm)+"-ci-"+strconv.Itoa(rf.commitIndex)+"-si-"+strconv.Itoa(rf.logs.lastIncludedIndex)+"-"+s+"| "+desc+"\n", v...)
 		} else {
 			log.Printf("raft-"+strconv.Itoa(rf.me)+"-go-"+strconv.Itoa(GoID())+"-term-"+strconv.Itoa(rf.currentTerm)+"-ci-"+strconv.Itoa(rf.commitIndex)+"-si-"+strconv.Itoa(rf.logs.lastIncludedIndex)+"-"+s+"| "+desc+"\n", v...)
-
 		}
 	}
 }

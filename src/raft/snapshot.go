@@ -69,7 +69,7 @@ func (rf *Raft) snapshotHandler(serverId int) {
 		rf.startNewTerm(reply.Term)
 		return
 	}
-	if args.Term != rf.currentTerm || rf.memberShip != LEADER {
+	if args.Term != rf.currentTerm || rf.state != LEADER {
 		return
 	}
 

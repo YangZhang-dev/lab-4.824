@@ -49,7 +49,6 @@ type Logs struct {
 	tLastIncludedTerm  int
 	lastIncludedIndex  int
 	tLastIncludedIndex int
-	mu                 sync.RWMutex
 }
 
 type Raft struct {
@@ -70,21 +69,21 @@ type Raft struct {
 	nextIndex   []int
 	matchIndex  []int
 
-	memberShip    int
+	state         int
 	voteEndTime   int64
 	voteTimeout   int64
 	majority      int
-	Rand          *rand.Rand
+	rand          *rand.Rand
 	applyCh       chan ApplyMsg
 	sendCh        chan ApplyMsg
-	VoteCond      *sync.Cond
-	HeartBeatCond *sync.Cond
+	voteCond      *sync.Cond
+	heartBeatCond *sync.Cond
 }
 
 func (rf *Raft) GetState() (int, bool) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	return rf.currentTerm, rf.memberShip == LEADER
+	return rf.currentTerm, rf.state == LEADER
 }
 func Make(peers []*labrpc.ClientEnd, me int,
 	persister *Persister, applyCh chan ApplyMsg) *Raft {
@@ -93,26 +92,28 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.persister = persister
 	rf.me = me
 	rf.applyCh = applyCh
-	prefix := "log/raft"
-	logFile, err := os.OpenFile(prefix+".log", os.O_APPEND|os.O_RDWR|os.O_CREATE, 0644)
-	if err != nil {
-		log.Panic(err)
+	if IsRaft {
+		prefix := "log/raft"
+		logFile, err := os.OpenFile(prefix+".log", os.O_APPEND|os.O_RDWR|os.O_CREATE, 0644)
+		if err != nil {
+			log.Panic(err)
+		}
+		log.SetOutput(logFile)
+		log.SetFlags(log.Lmicroseconds)
 	}
-	log.SetOutput(logFile)
-	log.SetFlags(log.Lmicroseconds)
 	// Your initialization code here (2A, 2B, 2C).
-	rf.setMembership(FOLLOWER)
-	rf.RestartVoteEndTime()
+	rf.setState(FOLLOWER)
+	rf.restartVoteEndTime()
 	t := len(peers) / 2
 	rf.majority = t
 	if t != 0 {
 		rf.majority++
 	}
-	rf.VoteCond = sync.NewCond(&sync.Mutex{})
-	rf.HeartBeatCond = sync.NewCond(&sync.Mutex{})
+	rf.voteCond = sync.NewCond(&sync.Mutex{})
+	rf.heartBeatCond = sync.NewCond(&sync.Mutex{})
 	rf.voteFor = VOTE_NO
-	rf.Rand = rand.New(rand.NewSource(int64(rf.me * rand.Int())))
-	rf.voteTimeout = int64(rf.Rand.Intn(VOTE_TIMEOUT_RANGE) + BASE_VOTE_TIMEOUT)
+	rf.rand = rand.New(rand.NewSource(int64(rf.me * rand.Int())))
+	rf.voteTimeout = int64(rf.rand.Intn(VOTE_TIMEOUT_RANGE) + BASE_VOTE_TIMEOUT)
 	rf.logs = Logs{
 		LogList: make([]Log, 0),
 	}
@@ -122,7 +123,8 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.sendCh = make(chan ApplyMsg, 100)
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
-
+	rf.nextIndex = make([]int, 0)
+	rf.matchIndex = make([]int, 0)
 	// start ticker goroutine to start elections
 	go rf.ticker()
 	go rf.appendEntries(true)
