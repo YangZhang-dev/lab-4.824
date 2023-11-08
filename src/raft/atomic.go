@@ -46,7 +46,15 @@ func (lf *Logs) getLogByIndex(index int) Log {
 	}
 	return lf.LogList[index-lf.lastIncludedIndex-1]
 }
-
+func (lf *Logs) getLogsByIndex(index int) []Log {
+	if index == lf.lastIncludedIndex {
+		return nil
+	}
+	if index < lf.lastIncludedIndex || index > lf.getLastLogIndex() {
+		return nil
+	}
+	return lf.LogList[index-lf.lastIncludedIndex-1:]
+}
 func (lf *Logs) getLastLogIndex() int {
 	if len(lf.LogList) < 1 {
 		return lf.lastIncludedIndex

@@ -3,8 +3,7 @@ package raft
 func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int, snapshot []byte) bool {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	if lastIncludedTerm != rf.logs.tLastIncludedTerm || lastIncludedIndex != rf.logs.tLastIncludedIndex {
-		rf.mu.Unlock()
+	if lastIncludedIndex <= rf.lastApplied || lastIncludedTerm != rf.logs.tLastIncludedTerm || lastIncludedIndex != rf.logs.tLastIncludedIndex {
 		rf.xlog("snapshot uninstall oldTerm %d,newTerm %d,oldIndex %d,newIndex %d", lastIncludedTerm, rf.logs.lastIncludedTerm, lastIncludedIndex, rf.logs.lastIncludedIndex)
 		return false
 	}

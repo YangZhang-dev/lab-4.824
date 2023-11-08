@@ -41,7 +41,7 @@ func (rf *Raft) appendEntries(isHeartBeat bool) {
 		rf.mu.Lock()
 		state := rf.state
 		rf.mu.Unlock()
-		if state != LEADER {
+		if isHeartBeat && state != LEADER {
 			rf.heartBeatCond.L.Lock()
 			for {
 				rf.mu.Lock()

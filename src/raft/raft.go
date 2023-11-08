@@ -30,7 +30,7 @@ const (
 	FOLLOWER  = 3
 )
 const (
-	BASE_VOTE_TIMEOUT  = 500
+	BASE_VOTE_TIMEOUT  = 1000
 	VOTE_TIMEOUT_RANGE = 200
 	HEARTBEAT_DURATION = 100
 )
@@ -117,14 +117,16 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.logs = Logs{
 		LogList: make([]Log, 0),
 	}
-
+	rf.matchIndex = make([]int, len(rf.peers))
+	rf.nextIndex = make([]int, len(rf.peers))
+	for i := range rf.nextIndex {
+		rf.nextIndex[i] = rf.logs.getLastLogIndex() + 1
+	}
 	rf.logs.lastIncludedIndex = 0
 	rf.logs.lastIncludedTerm = 0
 	rf.sendCh = make(chan ApplyMsg, 100)
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
-	rf.nextIndex = make([]int, 0)
-	rf.matchIndex = make([]int, 0)
 	// start ticker goroutine to start elections
 	go rf.ticker()
 	go rf.appendEntries(true)

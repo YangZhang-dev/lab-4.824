@@ -114,9 +114,23 @@ func (rf *Raft) RequestEntity(args *RequestEntityArgs, reply *RequestEntityReply
 		return
 	}
 
-	// B D
+	// TODO 优化以下判断log冲突的代码
+	logs := rf.logs.getLogsByIndex(prevLogIndex + len(entries) + 1)
+	conflict := false
+	for i := 0; i < min(len(entries), rf.logs.getLastLogIndex()-prevLogIndex); i++ {
+		requestLog := entries[i]
+		myLog := rf.logs.getLogByIndex(prevLogIndex + i + 1)
+		if requestLog.Term != myLog.Term || requestLog.Content != myLog.Content {
+			conflict = true
+			break
+		}
+	}
 	rf.logs.removeTailLogs(prevLogIndex)
 	rf.logs.storeLog(entries...)
+	if !conflict {
+		rf.logs.storeLog(logs...)
+	}
+
 	rf.xlog("after store, current log is %+v", rf.logs.LogList)
 	if rf.commitIndex < leaderCommit {
 		lastLogIndex := rf.logs.getLastLogIndex()
@@ -135,7 +149,6 @@ func (rf *Raft) RequestEntity(args *RequestEntityArgs, reply *RequestEntityReply
 			rf.xlog("从leader%v,同步完成,msg:%+v", args.LeaderId, msg)
 		}
 		rf.commitIndex = leaderCommit
-		// TODO
 		rf.lastApplied = rf.commitIndex
 		rf.xlog("从leader%v,同步完成,log is %+v", args.LeaderId, rf.logs.LogList)
 	}
