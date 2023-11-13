@@ -11,7 +11,7 @@ func checkTime(lastTime, timeout int64) (bool, time.Duration) {
 	voteTimeout := time.Duration(timeout) * time.Millisecond
 
 	elapsed := currentTime.Sub(voteEndTime)
-	duration := voteTimeout - time.Duration(2)*time.Microsecond - elapsed
+	duration := voteTimeout - time.Duration(2)*time.Millisecond - elapsed
 	if duration > 0 {
 		return false, duration
 	}

@@ -16,7 +16,7 @@ type ApplyMsg struct {
 	CommandValid bool
 	Command      interface{}
 	CommandIndex int
-
+	CommandTerm  int
 	// For 2D:
 	SnapshotValid bool
 	Snapshot      []byte
@@ -30,9 +30,9 @@ const (
 	FOLLOWER  = 3
 )
 const (
-	BASE_VOTE_TIMEOUT  = 1000
+	BASE_VOTE_TIMEOUT  = 600
 	VOTE_TIMEOUT_RANGE = 200
-	HEARTBEAT_DURATION = 100
+	HEARTBEAT_DURATION = 60
 )
 const (
 	VOTE_NO = -1
@@ -137,7 +137,7 @@ func (rf *Raft) Kill() {
 	atomic.StoreInt32(&rf.dead, 1)
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	rf.xlog("当前日志%+v，commitIndex：%v,snapshotIndex is %d", rf.logs.LogList, rf.commitIndex, rf.logs.lastIncludedIndex)
+	rf.xlog("当前日志%+v，commitIndex：%v,snapshotIndex is %d", rf.getLogHeadAndTail(), rf.commitIndex, rf.logs.lastIncludedIndex)
 }
 
 func (rf *Raft) killed() bool {

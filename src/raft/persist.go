@@ -52,5 +52,14 @@ func (rf *Raft) readPersist(data []byte) {
 		rf.lastApplied = p.LastIncludedIndex
 		rf.mu.Unlock()
 	}
-	rf.xlog("startup,log: %+v", rf.logs.LogList)
+	rf.xlog("startup,log: %+v", rf.getLogHeadAndTail())
+}
+func (rf *Raft) GetRaftSize() int {
+	return rf.persister.RaftStateSize()
+}
+func (rf *Raft) ReadRaftState() []byte {
+	return rf.persister.ReadRaftState()
+}
+func (rf *Raft) ReadSnapshot() []byte {
+	return rf.persister.ReadSnapshot()
 }

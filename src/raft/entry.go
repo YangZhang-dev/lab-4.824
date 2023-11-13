@@ -1,6 +1,8 @@
 package raft
 
-import "time"
+import (
+	"time"
+)
 
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	rf.mu.Lock()
@@ -20,7 +22,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	rf.persist()
 	rf.xlog("store down")
 	rf.mu.Unlock()
-	rf.appendEntries(false)
+	go rf.appendEntries(false)
 	return index, currentTerm, true
 }
 func (rf *Raft) sendNoOp() {
@@ -53,25 +55,17 @@ func (rf *Raft) appendEntries(isHeartBeat bool) {
 				rf.heartBeatCond.Wait()
 			}
 			rf.heartBeatCond.L.Unlock()
-			rf.mu.Lock()
-			rf.matchIndex = make([]int, len(rf.peers))
-			rf.nextIndex = make([]int, len(rf.peers))
-			for i := range rf.nextIndex {
-				rf.nextIndex[i] = rf.logs.getLastLogIndex() + 1
-			}
-			rf.sendNoOp()
-			rf.mu.Unlock()
 		}
 		rf.mu.Lock()
 		commitId := rf.commitIndex
 		term := rf.currentTerm
-		rf.xlog("before send,next indexes is %+v,match indexes is %+v，logList is %+v", rf.nextIndex, rf.matchIndex, rf.logs.LogList)
+		rf.xlog("before send,next indexes is %+v,match indexes is %+v，logList is %+v", rf.nextIndex, rf.matchIndex, rf.getLogHeadAndTail())
 		rf.mu.Unlock()
-		for i := range peers {
-			if i == me {
-				continue
+		for serverId := range peers {
+			if serverId != me {
+				// go rf.snapshotHandler(serverId)
+				go rf.leaderSendEntries(serverId, term, commitId)
 			}
-			go rf.leaderSendEntries(i, term, commitId)
 		}
 		if !isHeartBeat {
 			return
@@ -134,6 +128,10 @@ func (rf *Raft) leaderSendEntries(serverId, term, commitId int) {
 	}
 
 	rf.xlog("reply from server%v,reply:%+v", serverId, reply)
+	// TODO CHANGE
+	if reply.LastIncludeIndex < rf.logs.lastIncludedIndex {
+		go rf.snapshotHandler(serverId)
+	}
 	if !reply.Success {
 		if reply.Conflict {
 			if reply.XIndex <= lastIncludedIndex {
@@ -151,12 +149,9 @@ func (rf *Raft) leaderSendEntries(serverId, term, commitId int) {
 }
 
 func (rf *Raft) commitHandler(index int, term int) {
-	//rf.xlog("commit handler")
 	if index <= rf.commitIndex || rf.state != LEADER {
 		return
 	}
-	//rf.xlog("args term %v, matchIndex:%+v, check Log index:%v Term:%v", term, rf.matchIndex, index, rf.logs.getLogByIndex(index).Term)
-	//rf.xlog("nextIndex is :%+v, logs is %+v", rf.nextIndex, rf.logs.LogList)
 	counter := 0
 	maxIndex := -1
 	for serverId := range rf.peers {
@@ -168,7 +163,6 @@ func (rf *Raft) commitHandler(index int, term int) {
 				if matchIndex < index {
 					maxIndex = max(matchIndex, maxIndex)
 				}
-				//rf.xlog("server %v, index is: %v,matchIndex is %v", serverId, rf.logs.getLogByIndex(index).Term, matchIndex)
 				if matchIndex >= index {
 					counter++
 				}
@@ -177,30 +171,33 @@ func (rf *Raft) commitHandler(index int, term int) {
 		if counter >= rf.majority {
 			rf.xlog("commit a log: %+v,majority is %v", rf.logs.getLogByIndex(index), rf.majority)
 			rf.commitIndex = index
-			for rf.commitIndex > rf.lastApplied {
-				rf.lastApplied++
-				msg := ApplyMsg{
-					CommandValid: true,
-					Command:      rf.logs.getLogByIndex(rf.lastApplied).Content,
-					CommandIndex: rf.lastApplied,
-				}
-				rf.sendCh <- msg
-			}
-			rf.lastApplied = rf.commitIndex
 			rf.persist()
 			break
 		}
 	}
-	//rf.xlog("next indexes is %+v,match indexes is %+v", rf.nextIndex, rf.matchIndex)
-	//rf.xlog("for index %d,current counter is %d", index, counter)
 	rf.commitHandler(maxIndex, term)
 }
 func (rf *Raft) applier() {
-	for msg := range rf.sendCh {
-		if rf.killed() == true {
-			return
+	for !rf.killed() {
+		select {
+		case msg := <-rf.sendCh:
+			rf.applyCh <- msg
+		case <-time.After(20 * time.Millisecond):
+			rf.mu.Lock()
+			for rf.lastApplied < rf.commitIndex {
+				rf.lastApplied++
+				log := rf.logs.getLogByIndex(rf.lastApplied)
+				msg := ApplyMsg{
+					CommandValid: true,
+					Command:      log.Content,
+					CommandIndex: rf.lastApplied,
+					CommandTerm:  log.Term,
+				}
+				rf.mu.Unlock()
+				rf.applyCh <- msg
+				rf.mu.Lock()
+			}
+			rf.mu.Unlock()
 		}
-		rf.applyCh <- msg
-		rf.xlog("apply a log:%+v", msg)
 	}
 }

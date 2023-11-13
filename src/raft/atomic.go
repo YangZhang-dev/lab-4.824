@@ -8,7 +8,17 @@ import (
 func (rf *Raft) restartVoteEndTime() {
 	atomic.StoreInt64(&rf.voteEndTime, time.Now().UnixMilli())
 }
-
+func (rf *Raft) getLogHeadAndTail() []Log {
+	if len(rf.logs.LogList) <= 1 {
+		return []Log{}
+	}
+	head := rf.logs.LogList[0]
+	tail := rf.logs.LogList[len(rf.logs.LogList)-1]
+	logs := make([]Log, 0)
+	logs = append(logs, head)
+	logs = append(logs, tail)
+	return logs
+}
 func (rf *Raft) setState(m int) {
 	state := rf.state
 	rf.state = m
@@ -17,6 +27,12 @@ func (rf *Raft) setState(m int) {
 		return
 	}
 	if state != LEADER && m == LEADER {
+		rf.matchIndex = make([]int, len(rf.peers))
+		rf.nextIndex = make([]int, len(rf.peers))
+		for i := range rf.nextIndex {
+			rf.nextIndex[i] = rf.logs.getLastLogIndex() + 1
+		}
+		rf.sendNoOp()
 		rf.heartBeatCond.Signal()
 	}
 }

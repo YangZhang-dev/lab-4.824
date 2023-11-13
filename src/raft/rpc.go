@@ -16,11 +16,12 @@ type RequestEntityArgs struct {
 }
 
 type RequestEntityReply struct {
-	FollowerId int
-	Term       int
-	Conflict   bool
-	XIndex     int
-	Success    bool
+	FollowerId       int
+	Term             int
+	Conflict         bool
+	XIndex           int
+	LastIncludeIndex int
+	Success          bool
 }
 
 type RequestVoteArgs struct {
@@ -42,7 +43,6 @@ type InstallSnapshotReply struct {
 
 func (rf *Raft) RequestEntity(args *RequestEntityArgs, reply *RequestEntityReply) {
 
-	//rf.xlog("current log is %+v", rf.logs.LogList)
 	term := args.Term
 	prevLogIndex := args.PrevLogIndex
 	prevLogTerm := args.PrevLogTerm
@@ -55,9 +55,9 @@ func (rf *Raft) RequestEntity(args *RequestEntityArgs, reply *RequestEntityReply
 		rf.persist()
 		rf.mu.Unlock()
 	}()
-
+	reply.LastIncludeIndex = rf.logs.lastIncludedIndex
 	if len(args.Entries) >= 1 {
-		rf.xlog("get EV request,leader %d, args %+v,first log is %+v, last log is %+v", args.LeaderId, args, args.Entries[:1], args.Entries[len(args.Entries)-1:])
+		rf.xlog("get EV request,leader %d, first log is %+v, last log is %+v", args.LeaderId, args.Entries[:1], args.Entries[len(args.Entries)-1:])
 	} else {
 		rf.xlog("get EV request,leader %d, args %+v", args.LeaderId, args)
 	}
@@ -131,26 +131,10 @@ func (rf *Raft) RequestEntity(args *RequestEntityArgs, reply *RequestEntityReply
 		rf.logs.storeLog(logs...)
 	}
 
-	rf.xlog("after store, current log is %+v", rf.logs.LogList)
+	rf.xlog("after store, current log is %+v", rf.getLogHeadAndTail())
 	if rf.commitIndex < leaderCommit {
-		lastLogIndex := rf.logs.getLastLogIndex()
-		if leaderCommit > lastLogIndex {
-			leaderCommit = lastLogIndex
-		}
-
-		for rf.commitIndex < leaderCommit {
-			rf.commitIndex++
-			msg := ApplyMsg{
-				CommandValid: true,
-				Command:      rf.logs.getLogByIndex(rf.commitIndex).Content,
-				CommandIndex: rf.commitIndex,
-			}
-			rf.sendCh <- msg
-			rf.xlog("从leader%v,同步完成,msg:%+v", args.LeaderId, msg)
-		}
-		rf.commitIndex = leaderCommit
-		rf.lastApplied = rf.commitIndex
-		rf.xlog("从leader%v,同步完成,log is %+v", args.LeaderId, rf.logs.LogList)
+		rf.commitIndex = min(leaderCommit, rf.logs.getLastLogIndex())
+		rf.xlog("从leader%v,同步完成,log is %+v", args.LeaderId, rf.getLogHeadAndTail())
 	}
 	reply.Success = true
 }
@@ -193,13 +177,13 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 }
 
 func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapshotReply) {
-	rf.xlog("get a snapshot request,last index %d,last term %d", args.LastIncludedIndex, args.LastIncludedTerm)
 	data := args.Data
 	term := args.Term
 	lastIncludedIndex := args.LastIncludedIndex
 	lastIncludedTerm := args.LastIncludedTerm
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+	rf.xlog("get a snapshot request,leader is %d,last index %d,last term %d", args.LeaderId, args.LastIncludedIndex, args.LastIncludedTerm)
 	reply.Term = rf.currentTerm
 
 	if term < rf.currentTerm {
@@ -208,19 +192,20 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 	if term > rf.currentTerm {
 		rf.startNewTerm(term)
 	}
-	if lastIncludedIndex <= rf.logs.lastIncludedIndex {
+	if lastIncludedIndex <= rf.logs.tLastIncludedIndex {
+		rf.xlog("request lastIncludedIndex %d, lastIncludedIndex %d", lastIncludedIndex, rf.logs.tLastIncludedIndex)
 		return
 	}
 	rf.logs.tLastIncludedIndex = lastIncludedIndex
 	rf.logs.tLastIncludedTerm = lastIncludedTerm
-	applyMsg := ApplyMsg{
+	msg := ApplyMsg{
 		SnapshotValid: true,
 		Snapshot:      data,
 		SnapshotTerm:  lastIncludedTerm,
 		SnapshotIndex: lastIncludedIndex,
 	}
-	rf.sendCh <- applyMsg
-	rf.xlog("已完成snapshot request，wait install,current log is %+v", rf.logs.LogList)
+	rf.sendCh <- msg
+	rf.xlog("已完成snapshot request，wait install,current log is %+v", rf.getLogHeadAndTail())
 }
 
 func (rf *Raft) sendRequestEntity(server int, args *RequestEntityArgs, reply *RequestEntityReply) bool {
