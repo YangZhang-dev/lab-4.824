@@ -212,7 +212,7 @@ func (kv *KVServer) Kill() {
 	atomic.StoreInt32(&kv.dead, 1)
 	kv.rf.Kill()
 	// Your code here, if desired.
-	kv.klog("server will stop,state is %+v", kv)
+	kv.klog("server %d will stop", kv.me)
 }
 
 func (kv *KVServer) killed() bool {
