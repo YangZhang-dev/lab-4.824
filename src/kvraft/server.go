@@ -59,6 +59,7 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	kv.klog("finish Start,op:%+v", op)
 	kv.klog("wait logIndex %d", logIndex)
 	ch := kv.getChByLogIndex(logIndex, true)
+	defer kv.delChByLogIndex(logIndex)
 	select {
 	case result := <-ch:
 		reply.Value, reply.Err = result, OK
@@ -66,7 +67,6 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 		reply.Value, reply.Err = "", ErrTimeout
 		kv.klog("timeout return")
 	}
-	kv.delChByLogIndex(logIndex)
 	kv.klog("return from get request,%+v", reply)
 }
 
@@ -95,7 +95,7 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 
 	kv.klog("finish Start,op:%+v", op)
 	ch := kv.getChByLogIndex(logIndex, true)
-
+	defer kv.delChByLogIndex(logIndex)
 	kv.klog("wait logIndex %d", logIndex)
 	select {
 	case result := <-ch:
@@ -104,7 +104,7 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 		reply.Value, reply.Err = "", ErrTimeout
 		kv.klog("timeout return")
 	}
-	kv.delChByLogIndex(logIndex)
+
 	kv.klog("return from putAppend request,reply is %+v", reply)
 }
 func (kv *KVServer) delChByLogIndex(logIndex int) {
@@ -152,6 +152,7 @@ func (kv *KVServer) applier() {
 					kv.requestTable[op.ClientId] = op.RequestId
 				}
 			}
+			kv.klog("ready get raft state")
 			term, isLeader := kv.rf.GetState()
 			kv.klog("success get raft state %+v,%+v", term, isLeader)
 			if !isLeader {
@@ -162,13 +163,17 @@ func (kv *KVServer) applier() {
 				kv.klog("msg not current term return")
 				continue
 			}
+			kv.klog("ready get ch")
 			ch := kv.getChByLogIndex(msg.CommandIndex, false)
+			kv.klog("get a ch")
 			if ch != nil {
 				ch <- kv.table[op.Key]
 				kv.klog("send ok")
+			} else {
+				kv.klog("server already return")
 			}
 			// 不能单纯的判断大小
-			if float32(kv.rf.GetRaftSize()/kv.maxraftstate) > 0.4 {
+			if float32(kv.rf.GetRaftSize()/kv.maxraftstate) > 0.9 {
 				w := new(bytes.Buffer)
 				e := labgob.NewEncoder(w)
 				p := P{
@@ -189,11 +194,11 @@ func (kv *KVServer) applier() {
 				var p P
 				if d.Decode(&p) == nil {
 					if p.RequestTable != nil {
-						kv.klog("replace requestTable from %+v to %+v", kv.requestTable, p.RequestTable)
+						kv.klog("replace requestTable ")
 						kv.requestTable = p.RequestTable
 					}
 					if p.Table != nil {
-						kv.klog("replace table from %+v to %+v", kv.table, p.Table)
+						kv.klog("replace table")
 						kv.table = p.Table
 					}
 				}
@@ -230,7 +235,7 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.requestTable = make(map[int]int)
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 	// You may need initialization code here.
-	r := bytes.NewBuffer(kv.rf.ReadSnapshot())
+	r := bytes.NewBuffer(persister.ReadSnapshot())
 	d := labgob.NewDecoder(r)
 	var p P
 	if d.Decode(&p) == nil {
