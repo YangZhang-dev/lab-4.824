@@ -38,6 +38,9 @@ func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int,
 func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+	if rf.state != LEADER {
+		return
+	}
 	rf.xlog("from service get a snapshot request")
 	rf.logs.lastIncludedTerm = rf.logs.getLogByIndex(index).Term
 	rf.xlog("log %+v,request index is %d", rf.getLogHeadAndTail(), index)
