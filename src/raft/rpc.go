@@ -126,8 +126,10 @@ func (rf *Raft) RequestEntity(args *RequestEntityArgs, reply *RequestEntityReply
 		}
 	}
 	rf.logs.removeTailLogs(prevLogIndex)
-	rf.logs.storeLog(entries...)
-	if !conflict {
+	if entries != nil && len(entries) > 0 {
+		rf.logs.storeLog(entries...)
+	}
+	if !conflict && logs != nil && len(logs) > 0 {
 		rf.logs.storeLog(logs...)
 	}
 

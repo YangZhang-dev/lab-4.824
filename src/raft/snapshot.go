@@ -4,16 +4,10 @@ func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int,
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	rf.xlog("Condsnapshot request, lastApplied %d, oldTerm %d,newTerm %d,oldIndex %d,newIndex %d", rf.lastApplied, lastIncludedTerm, rf.logs.tLastIncludedTerm, lastIncludedIndex, rf.logs.tLastIncludedIndex)
-	// TODO LAST CHANGE
-	if lastIncludedTerm != rf.logs.tLastIncludedTerm || lastIncludedIndex != rf.logs.tLastIncludedIndex {
+	if lastIncludedIndex < rf.lastApplied || lastIncludedTerm != rf.logs.tLastIncludedTerm || lastIncludedIndex != rf.logs.tLastIncludedIndex {
 		rf.logs.tLastIncludedIndex = rf.logs.lastIncludedIndex
 		rf.logs.tLastIncludedTerm = rf.logs.lastIncludedTerm
 		rf.xlog("snapshot uninstall, lastApplied %d, oldTerm %d,newTerm %d,oldIndex %d,newIndex %d", rf.lastApplied, lastIncludedTerm, rf.logs.tLastIncludedTerm, lastIncludedIndex, rf.logs.tLastIncludedIndex)
-		return false
-	}
-	if lastIncludedIndex <= rf.logs.lastIncludedIndex {
-		rf.logs.tLastIncludedIndex = rf.logs.lastIncludedIndex
-		rf.logs.tLastIncludedTerm = rf.logs.lastIncludedTerm
 		return false
 	}
 	if lastIncludedIndex > rf.lastApplied {

@@ -33,9 +33,12 @@ const (
 	BASE_VOTE_TIMEOUT  = 600
 	VOTE_TIMEOUT_RANGE = 200
 	HEARTBEAT_DURATION = 60
+	APPLIY_DURATION    = 20
 )
 const (
-	VOTE_NO = -1
+	VOTE_NO        = -1
+	TIMEOUT_OFFSET = 2
+	SENDCHAN_CAP   = 100
 )
 
 type Log struct {
@@ -58,12 +61,14 @@ type Raft struct {
 	me        int
 	dead      int32
 
-	// --------persistent state---------------
+	// --------persistent---------------
+
 	currentTerm int
 	voteFor     int
 	logs        Logs
 
-	// --------volatile state---------------
+	// --------volatile---------------
+
 	commitIndex int
 	lastApplied int
 	nextIndex   []int
@@ -103,7 +108,6 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	}
 	// Your initialization code here (2A, 2B, 2C).
 	rf.setState(FOLLOWER)
-	rf.restartVoteEndTime()
 	t := len(peers) / 2
 	rf.majority = t
 	if t != 0 {
@@ -124,10 +128,11 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	}
 	rf.logs.lastIncludedIndex = 0
 	rf.logs.lastIncludedTerm = 0
-	rf.sendCh = make(chan ApplyMsg, 100)
+	rf.sendCh = make(chan ApplyMsg, SENDCHAN_CAP)
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
 	// start ticker goroutine to start elections
+	rf.restartVoteEndTime()
 	go rf.ticker()
 	go rf.appendEntries(true)
 	go rf.applier()

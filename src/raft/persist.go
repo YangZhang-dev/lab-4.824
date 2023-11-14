@@ -24,9 +24,7 @@ func (rf *Raft) persist() {
 	p.LastIncludedTerm = rf.logs.lastIncludedTerm
 	p.LogList = rf.logs.LogList
 
-	rf.persister.mu.Lock()
 	snapshot := rf.persister.snapshot
-	rf.persister.mu.Unlock()
 
 	e.Encode(p)
 	data := w.Bytes()

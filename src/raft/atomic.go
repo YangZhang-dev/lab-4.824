@@ -1,12 +1,11 @@
 package raft
 
 import (
-	"sync/atomic"
 	"time"
 )
 
 func (rf *Raft) restartVoteEndTime() {
-	atomic.StoreInt64(&rf.voteEndTime, time.Now().UnixMilli())
+	rf.voteEndTime = time.Now().UnixMilli()
 }
 func (rf *Raft) getLogHeadAndTail() []Log {
 	if len(rf.logs.LogList) <= 1 {
