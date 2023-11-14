@@ -182,6 +182,7 @@ func (rf *Raft) applier() {
 		select {
 		case msg := <-rf.sendCh:
 			rf.applyCh <- msg
+			rf.xlog("apply snapshot msg,index %d", msg.SnapshotIndex)
 		case <-time.After(20 * time.Millisecond):
 			rf.mu.Lock()
 			for rf.lastApplied < rf.commitIndex {
@@ -196,6 +197,7 @@ func (rf *Raft) applier() {
 				rf.mu.Unlock()
 				rf.applyCh <- msg
 				rf.mu.Lock()
+				rf.xlog("apply log,index is %d", msg.CommandIndex)
 			}
 			rf.mu.Unlock()
 		}

@@ -11,7 +11,7 @@ func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int,
 		rf.xlog("snapshot uninstall, lastApplied %d, oldTerm %d,newTerm %d,oldIndex %d,newIndex %d", rf.lastApplied, lastIncludedTerm, rf.logs.tLastIncludedTerm, lastIncludedIndex, rf.logs.tLastIncludedIndex)
 		return false
 	}
-	if lastIncludedIndex <= rf.lastApplied {
+	if lastIncludedIndex <= rf.logs.lastIncludedIndex {
 		rf.logs.tLastIncludedIndex = rf.logs.lastIncludedIndex
 		rf.logs.tLastIncludedTerm = rf.logs.lastIncludedTerm
 		return false
