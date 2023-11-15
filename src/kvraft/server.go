@@ -58,7 +58,7 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	}
 	kv.klog("finish Start,op:%+v", op)
 	kv.klog("wait logIndex %d", logIndex)
-	ch := kv.getChByLogIndex(logIndex, true)
+	ch := kv.getChByLogIndex(logIndex)
 	defer kv.delChByLogIndex(logIndex)
 	select {
 	case result := <-ch:
@@ -94,8 +94,8 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	}
 
 	kv.klog("finish Start,op:%+v", op)
-	ch := kv.getChByLogIndex(logIndex, true)
-	defer kv.delChByLogIndex(logIndex)
+	ch := kv.getChByLogIndex(logIndex)
+
 	kv.klog("wait logIndex %d", logIndex)
 	select {
 	case result := <-ch:
@@ -104,7 +104,7 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 		reply.Value, reply.Err = "", ErrTimeout
 		kv.klog("timeout return")
 	}
-
+	kv.delChByLogIndex(logIndex)
 	kv.klog("return from putAppend request,reply is %+v", reply)
 }
 func (kv *KVServer) delChByLogIndex(logIndex int) {
@@ -112,15 +112,28 @@ func (kv *KVServer) delChByLogIndex(logIndex int) {
 	defer kv.Unlock()
 	delete(kv.chTable, logIndex)
 }
-func (kv *KVServer) getChByLogIndex(logIndex int, isAutoCreate bool) chan string {
+
+func (kv *KVServer) getChByLogIndex(logIndex int) chan string {
+	kv.Lock()
+	defer kv.Unlock()
+	if _, ok := kv.chTable[logIndex]; !ok {
+		kv.chTable[logIndex] = make(chan string)
+	}
+	return kv.chTable[logIndex]
+}
+func (kv *KVServer) sendByLogIndex(logIndex int, v string) bool {
 	kv.Lock()
 	defer kv.Unlock()
 	ch, ok := kv.chTable[logIndex]
-	if !ok && isAutoCreate {
-		ch = make(chan string)
-		kv.chTable[logIndex] = ch
+	if ok {
+		select {
+		case ch <- v:
+		default:
+			return false
+		}
+		return true
 	}
-	return ch
+	return false
 }
 func (kv *KVServer) applier() {
 
@@ -164,10 +177,8 @@ func (kv *KVServer) applier() {
 				continue
 			}
 			kv.klog("ready get ch")
-			ch := kv.getChByLogIndex(msg.CommandIndex, false)
-			kv.klog("get a ch")
-			if ch != nil {
-				ch <- kv.table[op.Key]
+			ok = kv.sendByLogIndex(msg.CommandIndex, kv.table[op.Key])
+			if ok {
 				kv.klog("send ok")
 			} else {
 				kv.klog("server already return")
