@@ -1,6 +1,8 @@
 package kvraft
 
-import "6.824/labrpc"
+import (
+	"6.824/labrpc"
+)
 import "testing"
 import "os"
 
@@ -83,6 +85,7 @@ func (cfg *config) LogSize() int {
 	logsize := 0
 	for i := 0; i < cfg.n; i++ {
 		n := cfg.saved[i].RaftStateSize()
+		fmt.Printf("server %d log size is %+v\n", i, n)
 		if n > logsize {
 			logsize = n
 		}
@@ -174,7 +177,7 @@ func (cfg *config) ConnectAll() {
 func (cfg *config) partition(p1 []int, p2 []int) {
 	cfg.mu.Lock()
 	defer cfg.mu.Unlock()
-	// log.Printf("partition servers into: %v %v\n", p1, p2)
+	//fmt.Printf("partition servers into: %v %v\n", p1, p2)
 	for i := 0; i < len(p1); i++ {
 		cfg.disconnectUnlocked(p1[i], p2)
 		cfg.connectUnlocked(p1[i], p1)
@@ -269,7 +272,7 @@ func (cfg *config) ShutdownServer(i int) {
 	// a fresh persister, in case old instance
 	// continues to update the Persister.
 	// but copy old persister's content so that we always
-	// pass Make() the last persisted state.
+	// pass Make() the last persisted State.
 	if cfg.saved[i] != nil {
 		cfg.saved[i] = cfg.saved[i].Copy()
 	}
@@ -301,10 +304,10 @@ func (cfg *config) StartServer(i int) {
 	}
 
 	// a fresh persister, so old instance doesn't overwrite
-	// new instance's persisted state.
+	// new instance's persisted State.
 	// give the fresh persister a copy of the old persister's
-	// state, so that the spec is that we pass StartKVServer()
-	// the last persisted state.
+	// State, so that the spec is that we pass StartKVServer()
+	// the last persisted State.
 	if cfg.saved[i] != nil {
 		cfg.saved[i] = cfg.saved[i].Copy()
 	} else {

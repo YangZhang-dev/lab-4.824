@@ -8,7 +8,9 @@ package raft
 // test with the original before submitting.
 //
 
-import "6.824/labgob"
+import (
+	"6.824/labgob"
+)
 import "6.824/labrpc"
 import "bytes"
 import "log"
@@ -164,6 +166,7 @@ func (cfg *config) applier(i int, applyCh chan ApplyMsg) {
 			cfg.mu.Unlock()
 			if m.CommandIndex > 1 && prevok == false {
 				err_msg = fmt.Sprintf("server %v apply out of order %v", i, m.CommandIndex)
+				fmt.Printf("error_msg is %+v, log is %+v\n", err_msg, cfg.logs[i])
 			}
 			if err_msg != "" {
 				log.Fatalf("apply error: %v\n", err_msg)
@@ -204,6 +207,7 @@ func (cfg *config) applierSnap(i int, applyCh chan ApplyMsg) {
 			cfg.mu.Unlock()
 			if m.CommandIndex > 1 && prevok == false {
 				err_msg = fmt.Sprintf("server %v apply out of order %v", i, m.CommandIndex)
+				fmt.Printf("log is %+v", cfg.logs[i])
 			}
 			if err_msg != "" {
 				log.Fatalf("apply error: %v\n", err_msg)
@@ -230,13 +234,11 @@ func (cfg *config) applierSnap(i int, applyCh chan ApplyMsg) {
 	}
 }
 
-//
 // start or re-start a Raft.
 // if one already exists, "kill" it first.
 // allocate new outgoing port file names, and a new
 // state persister, to isolate previous instance of
 // this server. since we cannot really kill it.
-//
 func (cfg *config) start1(i int, applier func(int, chan ApplyMsg)) {
 	cfg.crash1(i)
 
@@ -500,9 +502,10 @@ func (cfg *config) wait(index int, n int, startTerm int) interface{} {
 func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 	t0 := time.Now()
 	starts := 0
+	index := -1
 	for time.Since(t0).Seconds() < 10 {
 		// try all the servers, maybe one is the leader.
-		index := -1
+		index = -1
 		for si := 0; si < cfg.n; si++ {
 			starts = (starts + 1) % cfg.n
 			var rf *Raft
@@ -542,7 +545,7 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 			time.Sleep(50 * time.Millisecond)
 		}
 	}
-	cfg.t.Fatalf("one(%v) failed to reach agreement", cmd)
+	cfg.t.Fatalf("one(%v) failed to reach agreement,index is (%v)", cmd, index)
 	return -1
 }
 
