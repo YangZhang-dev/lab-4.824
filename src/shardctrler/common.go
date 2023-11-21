@@ -1,5 +1,7 @@
 package shardctrler
 
+import "time"
+
 //
 // Shard controler: assigns shards to replication groups.
 //
@@ -23,19 +25,37 @@ const NShards = 10
 // A configuration -- an assignment of shards to groups.
 // Please don't change this.
 type Config struct {
-	Num    int              // config number
-	Shards [NShards]int     // shard -> gid
+	Num int // config number
+	// 0 1 2 3 1 2 1 0 1 0
+	Shards [NShards]int // shard -> gid
+	// 0:x y z 1:a b c 2:t f g
 	Groups map[int][]string // gid -> servers[]
 }
 
 const (
-	OK = "OK"
+	OK         = "OK"
+	ErrTimeout = "ErrTimeout"
+	ErrUnknown = "ErrUnknown"
+)
+const (
+	AGREE_TIMEOUT = 100 * time.Millisecond
+)
+const (
+	JOIN  = 1
+	LEAVE = 2
+	QUERY = 3
+	MOVE  = 4
+)
+const (
+	EMPTY_GID = 0
 )
 
 type Err string
 
 type JoinArgs struct {
-	Servers map[int][]string // new GID -> servers mappings
+	ClientID  int
+	RequestID int
+	Servers   map[int][]string // new GID -> servers mappings
 }
 
 type JoinReply struct {
@@ -44,7 +64,9 @@ type JoinReply struct {
 }
 
 type LeaveArgs struct {
-	GIDs []int
+	GIDs      []int
+	ClientID  int
+	RequestID int
 }
 
 type LeaveReply struct {
@@ -53,8 +75,10 @@ type LeaveReply struct {
 }
 
 type MoveArgs struct {
-	Shard int
-	GID   int
+	Shard     int
+	GID       int
+	ClientID  int
+	RequestID int
 }
 
 type MoveReply struct {
@@ -63,7 +87,9 @@ type MoveReply struct {
 }
 
 type QueryArgs struct {
-	Num int // desired config number
+	Num       int // desired config number
+	ClientID  int
+	RequestID int
 }
 
 type QueryReply struct {

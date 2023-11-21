@@ -120,7 +120,7 @@ func (rf *Raft) RequestEntity(args *RequestEntityArgs, reply *RequestEntityReply
 	for i := 0; i < min(len(entries), rf.logs.getLastLogIndex()-prevLogIndex); i++ {
 		requestLog := entries[i]
 		myLog := rf.logs.getLogByIndex(prevLogIndex + i + 1)
-		if requestLog.Term != myLog.Term || requestLog.Content != myLog.Content {
+		if requestLog.Term != myLog.Term {
 			conflict = true
 			break
 		}
