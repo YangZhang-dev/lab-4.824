@@ -141,40 +141,25 @@ func (sc *ShardCtrler) applier() {
 			var result any
 			sc.slog("maxreq %d,req %d", sc.requestTable[op.ClientId], op.RequestId)
 			if sc.requestTable[op.ClientId] < op.RequestId {
-				if op.Operation == QUERY {
-					req, ok := (op.V).(int)
-					if ok {
-						result = sc.QueryHandler(req)
-					}
+				switch (op.V).(type) {
+				case int:
+					result = sc.QueryHandler((op.V).(int))
 					sc.slog("QUERY operation")
-				} else if op.Operation == MOVE {
-					req, ok := (op.V).(MoveReq)
-					if ok {
-						sc.MoveHandler(req)
-					}
+				case MoveReq:
+					sc.MoveHandler((op.V).(MoveReq))
 					sc.slog("MOVE operation")
-				} else if op.Operation == LEAVE {
-					req, ok := (op.V).([]int)
-					if ok {
-						sc.slog("req:%+v", req)
-						sc.LeaveHandler(req)
-					}
+				case []int:
+					sc.LeaveHandler((op.V).([]int))
 					sc.slog("LEAVE operation")
-				} else if op.Operation == JOIN {
-					req, ok := (op.V).(GroupInfo)
-					if ok {
-						sc.JoinHandler(req)
-					}
+				case GroupInfo:
+					sc.JoinHandler((op.V).(GroupInfo))
 					sc.slog("JOIN operation")
 				}
 				sc.requestTable[op.ClientId] = op.RequestId
 			}
 			term, isLeader := sc.rf.GetState()
 			sc.slog("success get raft state %+v,%+v", term, isLeader)
-			if !isLeader {
-				continue
-			}
-			if term != msg.CommandTerm {
+			if !isLeader || term != msg.CommandTerm {
 				continue
 			}
 			ok = sc.sendByLogIndex(msg.CommandIndex, result)
